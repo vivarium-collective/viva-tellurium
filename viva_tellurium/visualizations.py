@@ -1,4 +1,4 @@
-"""Visualization Step subclasses for pbg-tellurium.
+"""Visualization Step subclasses for viva-tellurium.
 
 Visualizations follow the pbg-superpowers convention (v0.4.15+):
 each subclass overrides `update()` to consume per-step state via wires

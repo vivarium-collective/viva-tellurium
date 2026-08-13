@@ -3,8 +3,8 @@
 import pytest
 from process_bigraph import Composite, allocate_core, gather_emitter_results
 from process_bigraph.emitter import RAMEmitter
-from pbg_tellurium.processes import TelluriumProcess
-from pbg_tellurium.composites import make_tellurium_document
+from viva_tellurium.processes import TelluriumProcess
+from viva_tellurium.composites import make_tellurium_document
 
 
 MODEL = """
