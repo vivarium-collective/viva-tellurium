@@ -1,11 +1,11 @@
-# pbg-tellurium
+# viva-tellurium
 
 Process-bigraph wrapper for [Tellurium](https://tellurium.analogmachine.org/) /
 [libroadrunner](https://libroadrunner.org/), exposing any SBML or Antimony
 kinetic model as a `process-bigraph` Process so it can be composed with
 other simulators in a bigraph document.
 
-**[View Interactive Demo Report](https://vivarium-collective.github.io/pbg-tellurium/)** — Lotka-Volterra predator-prey, Elowitz-Leibler repressilator, and Gillespie stochastic dimerization with Plotly time series, phase portraits, reaction-rate charts, and bigraph architecture diagrams.
+**[View Interactive Demo Report](https://vivarium-collective.github.io/viva-tellurium/)** — Lotka-Volterra predator-prey, Elowitz-Leibler repressilator, and Gillespie stochastic dimerization with Plotly time series, phase portraits, reaction-rate charts, and bigraph architecture diagrams.
 
 ## Installation
 
@@ -19,7 +19,7 @@ uv pip install -e .
 ```python
 from process_bigraph import Composite, allocate_core, gather_emitter_results
 from process_bigraph.emitter import RAMEmitter
-from pbg_tellurium import TelluriumProcess, make_tellurium_document
+from viva_tellurium import TelluriumProcess, make_tellurium_document
 
 ANTIMONY = """
 model decay

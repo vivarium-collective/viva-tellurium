@@ -2,7 +2,7 @@
 
 import pytest
 from process_bigraph import allocate_core
-from pbg_tellurium.processes import TelluriumProcess, TelluriumUTCStep, TelluriumSteadyStateStep
+from viva_tellurium.processes import TelluriumProcess, TelluriumUTCStep, TelluriumSteadyStateStep
 
 
 MODEL_DECAY = """
@@ -171,7 +171,7 @@ def test_tellurium_steady_state_step(core):
     at S1=0, S2=anything, because the only flux is the irreversible decay.
     RoadRunner's steadyState() converges to that equilibrium successfully.
     """
-    from pbg_tellurium.processes import TelluriumSteadyStateStep
+    from viva_tellurium.processes import TelluriumSteadyStateStep
 
     step = TelluriumSteadyStateStep(
         config={'model': MODEL_DECAY, 'model_format': 'antimony'},

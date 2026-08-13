@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pbg-tellurium"
+name = "viva-tellurium"
 version = "0.1.0"
 description = "Process-bigraph wrapper for Tellurium / libroadrunner SBML simulation"
 readme = "README.md"
@@ -24,4 +24,4 @@ dev = ["pytest", "bigraph-viz", "matplotlib"]
 viva-superpowers = { git = "https://github.com/vivarium-collective/viva-superpowers.git", branch = "main" }
 
 [tool.setuptools.packages.find]
-include = ["pbg_tellurium*"]
+include = ["viva_tellurium*", "pbg_tellurium"]  # pbg_tellurium = deprecation shim
