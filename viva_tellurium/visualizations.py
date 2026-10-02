@@ -1,10 +1,12 @@
 """Visualization Step subclasses for viva-tellurium.
 
-Visualizations follow the pbg-superpowers convention (v0.4.15+):
-each subclass overrides `update()` to consume per-step state via wires
-(like an Emitter), accumulates history internally, and returns
-``{'html': '<rendered figure>'}`` each step. The composite spec wires
-the input ports to store paths.
+Visualizations follow the pbg-superpowers new-style contract: each
+subclass implements ``accumulate(state)`` to buffer per-step numeric
+data (like an Emitter) and ``render()`` to build the Plotly figure once
+at end-of-run, returning the HTML string. The base orchestrator owns the
+per-tick path (it calls ``accumulate`` each step and ``render`` once), so
+subclasses do NOT override ``update()``. The composite spec wires the
+input ports to store paths.
 
 See viva_superpowers.visualization for the base-class contract.
 """
@@ -16,10 +18,10 @@ from viva_superpowers.visualization import Visualization
 class SpeciesTimeSeriesPlots(Visualization):
     """Time-series HTML plot of TelluriumProcess's species concentrations.
 
-    Consumes the `species` map (and optionally `time`) at each step,
-    accumulates per-species trajectories across calls, and emits a Plotly
-    HTML figure on every update. Downstream consumers (dashboards,
-    notebook viewers) read the latest 'html' from the wired store.
+    Buffers the `species` map (and optionally `time`) at each step into
+    per-species trajectories, then renders a single Plotly HTML figure at
+    end-of-run. Downstream consumers (dashboards, notebook viewers) read
+    the rendered 'html' from the wired store.
     """
 
     config_schema = {
@@ -38,10 +40,10 @@ class SpeciesTimeSeriesPlots(Visualization):
             'time': 'float',
         }
 
-    def update(self, state, interval=1.0):
+    def accumulate(self, state):
         t = state.get('time')
         if t is None:
-            t = len(self.times) * (interval or 1.0)
+            t = float(len(self.times))
         self.times.append(float(t))
 
         species = state.get('species') or {}
@@ -55,6 +57,7 @@ class SpeciesTimeSeriesPlots(Visualization):
             v = species.get(sid)
             self.history[sid].append(float(v) if v is not None else 0.0)
 
+    def render(self):
         title = (self.config or {}).get('title', 'Tellurium species trajectories')
         traces = []
         for sid, ys in self.history.items():
@@ -72,4 +75,4 @@ class SpeciesTimeSeriesPlots(Visualization):
             f'legend:{{orientation:"h",y:-0.2}}}},'
             f'{{responsive:true,displayModeBar:false}});</script>'
         )
-        return {'html': html}
+        return html

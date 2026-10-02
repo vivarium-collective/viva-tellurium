@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viva-tellurium"
-version = "0.1.0"
+version = "0.1.1"
 description = "Process-bigraph wrapper for Tellurium / libroadrunner SBML simulation"
 readme = "README.md"
 license = { text = "MIT" }
