@@ -6,18 +6,30 @@ initialized on first update() call.
 """
 
 import os
+from pathlib import Path
 from process_bigraph import Process, Step
 
 
 def _load_roadrunner(model_source, model_format='antimony', model_file=''):
     """Build a RoadRunner instance from an Antimony string, SBML string, or file."""
-    import tellurium as te
-
     if model_file:
+        resolved = Path(model_file)
+        if not resolved.is_absolute():
+            resolved = Path.cwd() / resolved
+        if not resolved.exists():
+            raise FileNotFoundError(
+                f"Tellurium model_file {model_file!r} not found. "
+                f"Resolved to {str(resolved)!r} (cwd: {str(Path.cwd())!r}). "
+                "Pass an absolute path, or a path relative to the current "
+                "working directory."
+            )
+        import tellurium as te
         if model_file.endswith('.ant') or model_file.endswith('.txt'):
-            with open(model_file) as f:
+            with open(resolved) as f:
                 return te.loada(f.read())
-        return te.loadSBMLModel(model_file)
+        return te.loadSBMLModel(str(resolved))
+
+    import tellurium as te
 
     if model_format == 'sbml':
         return te.loadSBMLModel(model_source)
