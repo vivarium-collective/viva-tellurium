@@ -69,6 +69,36 @@ def test_document_factory_with_overrides(core):
     assert stores['parameters']['k'] == 0.1
 
 
+def test_initial_state_emitted_at_t0(core):
+    """The step-0 emitter row must carry the model's t=0 state.
+
+    Regression for #7: a TelluriumProcess whose outputs are wired to empty
+    stores (like decay-demo) used to emit an empty first row
+    ({"species": {}, "parameters": {}, time 0}) because initial_state() never
+    reached the wired stores. The first real values only appeared at step 1.
+    The t=0 row must instead carry the model's initial species, parameters
+    and time, the way an OdeProcess composite's does.
+    """
+    doc = make_tellurium_document(model=MODEL, interval=0.5)
+    sim = Composite({'state': doc}, core=core)
+    sim.run(2.0)
+
+    rows = gather_emitter_results(sim)[('emitter',)]
+
+    row0 = rows[0]
+    assert row0['time'] == 0.0
+    assert row0.get('global_time') == 0.0
+    # t=0 species/parameters are the model's initial state, not empty maps.
+    assert row0['species'] == {'S1': 10.0, 'S2': 0.0}
+    assert row0['parameters']['k'] == 0.3
+
+    # Numerical behavior after t=0 is unchanged: S1 has decayed by step 1.
+    row1 = rows[1]
+    assert row1['time'] == pytest.approx(0.5)
+    assert row1['species']['S1'] < 10.0
+    assert row1['species']['S2'] > 0.0
+
+
 def test_roundtrip_species_conservation(core):
     """Mass conservation over a composite run."""
     doc = make_tellurium_document(model=MODEL, interval=1.0)

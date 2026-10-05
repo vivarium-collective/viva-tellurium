@@ -28,6 +28,86 @@ from viva_tellurium.processes import TelluriumProcess, TelluriumUTCStep, Telluri
 
 
 # ---------------------------------------------------------------------------
+# t=0 store seeding (issue #7)
+# ---------------------------------------------------------------------------
+
+def _resolve_link_class(core, address):
+    """Resolve a composite-doc address ('local:TelluriumProcess') to its class."""
+    if not isinstance(address, str):
+        return None
+    key = address.split(":", 1)[-1]  # strip the protocol prefix ('local:')
+    return getattr(core, "link_registry", {}).get(key)
+
+
+def _set_store_path(state, path, value):
+    """Set `value` at nested-dict `path` in `state`, creating dicts as needed.
+
+    A non-empty value the document author already placed at the leaf is
+    preserved (the author's explicit initial condition wins).
+    """
+    cursor = state
+    for key in path[:-1]:
+        nxt = cursor.get(key)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            cursor[key] = nxt
+        cursor = nxt
+    leaf = path[-1]
+    existing = cursor.get(leaf)
+    if isinstance(existing, dict) and len(existing) > 0:
+        return
+    if isinstance(existing, (int, float)) and not isinstance(existing, bool) and existing != 0:
+        return
+    cursor[leaf] = value
+
+
+def seed_initial_stores(state, core):
+    """Write each process/step's ``initial_state()`` into its wired output stores.
+
+    process-bigraph projects a process's ``initial_state()`` through its output
+    ports, but when those outputs are wired to empty stores (the ``decay-demo``
+    pattern) the realized empty store wins the final merge during ``Composite``
+    construction, so the first emitter row (``global_time=0``) sees empty maps —
+    issue #7. This walks the composite document, instantiates each process/step
+    whose outputs are wired to store paths, and writes its ``initial_state()``
+    into those stores so the t=0 emitter row carries the model's initial
+    species, parameters and time (as an ``OdeProcess`` composite's does).
+
+    Mutates and returns ``state``. Seeding is best-effort and never blocks
+    composite construction; numerical behavior after t=0 is unaffected.
+    """
+    if not isinstance(state, dict):
+        return state
+
+    for node in state.values():
+        if not isinstance(node, dict) or node.get("_type") not in ("process", "step"):
+            continue
+        wires = node.get("outputs")
+        if not isinstance(wires, dict):
+            continue
+        cls = _resolve_link_class(core, node.get("address"))
+        if cls is None or not hasattr(cls, "initial_state"):
+            continue
+        try:
+            instance = cls(config=node.get("config", {}) or {}, core=core)
+            init = instance.initial_state()
+        except Exception:
+            continue
+        if not isinstance(init, dict):
+            continue
+        for port, path in wires.items():
+            if port not in init:
+                continue
+            value = init[port]
+            if value is None or (isinstance(value, (dict, list)) and len(value) == 0):
+                continue
+            if isinstance(path, (list, tuple)) and path:
+                _set_store_path(state, list(path), value)
+
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Hand-coded composite factories (legacy / programmatic API)
 # ---------------------------------------------------------------------------
 
@@ -64,7 +144,7 @@ def make_tellurium_document(
     species_overrides = species_overrides or {}
     parameter_overrides = parameter_overrides or {}
 
-    return {
+    doc = {
         'tellurium': {
             '_type': 'process',
             'address': 'local:TelluriumProcess',
@@ -96,6 +176,7 @@ def make_tellurium_document(
                 'emit': {
                     'species': 'map[float]',
                     'rates': 'map[float]',
+                    'parameters': 'map[float]',
                     'time': 'float',
                     'global_time': 'float',
                 },
@@ -103,11 +184,23 @@ def make_tellurium_document(
             'inputs': {
                 'species': ['stores', 'species'],
                 'rates': ['stores', 'rates'],
+                'parameters': ['stores', 'parameters'],
                 'time': ['stores', 'time'],
                 'global_time': ['global_time'],
             },
         },
     }
+
+    # Seed the wired stores with the model's t=0 state so the first emitter
+    # row (global_time=0) carries initial species/parameters/time (issue #7).
+    # Use a minimal core (just the Tellurium links) so seeding never pulls in
+    # optional viz dependencies.
+    seed_core = allocate_core()
+    seed_core.register_link('TelluriumProcess', TelluriumProcess)
+    seed_core.register_link('TelluriumUTCStep', TelluriumUTCStep)
+    seed_core.register_link('TelluriumSteadyStateStep', TelluriumSteadyStateStep)
+    seed_initial_stores(doc, seed_core)
+    return doc
 
 
 def make_tellurium_steady_state_document(
@@ -260,4 +353,7 @@ def build_composite(name: str, *, overrides: dict | None = None, core=None):
 
     params = spec.get("parameters") or {}
     state = _substitute(spec.get("state") or {}, params, overrides or {})
+    # Seed wired output stores with each process's t=0 state so the first
+    # emitter row carries the model's initial values (issue #7).
+    seed_initial_stores(state, core)
     return Composite({"state": state}, core=core)
