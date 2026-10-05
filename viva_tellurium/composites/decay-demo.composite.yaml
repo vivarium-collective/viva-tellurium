@@ -54,8 +54,10 @@ state:
       emit:
         species: "map[float]"
         rates: "map[float]"
+        parameters: "map[float]"
         time: "float"
     inputs:
       species: ["stores", "species"]
       rates: ["stores", "rates"]
+      parameters: ["stores", "parameters"]
       time: ["stores", "time"]
