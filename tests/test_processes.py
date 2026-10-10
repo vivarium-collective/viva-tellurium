@@ -164,6 +164,52 @@ def test_tellurium_step(core):
     assert s1[0] > s1[-1]
 
 
+def test_utc_step_applies_tolerances(core):
+    """TelluriumUTCStep should apply absolute/relative tolerances to the integrator."""
+    step = TelluriumUTCStep(
+        config={
+            'model': MODEL_DECAY,
+            'absolute_tolerance': 1e-3,
+            'relative_tolerance': 1e-2,
+        }, core=core)
+    step.update({})
+    assert step._rr.integrator.absolute_tolerance == pytest.approx(1e-3)
+    assert step._rr.integrator.relative_tolerance == pytest.approx(1e-2)
+
+
+def test_utc_step_applies_seed(core):
+    """TelluriumUTCStep should apply the configured seed to a stochastic integrator."""
+    step = TelluriumUTCStep(
+        config={
+            'model': MODEL_DECAY,
+            'integrator': 'gillespie',
+            'seed': 5,
+        }, core=core)
+    step.update({})
+    assert step._rr.integrator.seed == 5
+
+
+def test_steady_state_step_applies_tolerances(core):
+    """TelluriumSteadyStateStep should apply absolute/relative tolerances to the integrator."""
+    step = TelluriumSteadyStateStep(
+        config={
+            'model': MODEL_DECAY,
+            'absolute_tolerance': 1e-3,
+            'relative_tolerance': 1e-2,
+        }, core=core)
+    step.update({})
+    assert step._rr.integrator.absolute_tolerance == pytest.approx(1e-3)
+    assert step._rr.integrator.relative_tolerance == pytest.approx(1e-2)
+
+
+def test_step_defaults_unchanged(core):
+    """With no tolerance config, the Step uses the schema defaults on the integrator."""
+    step = TelluriumUTCStep(config={'model': MODEL_DECAY}, core=core)
+    step.update({})
+    assert step._rr.integrator.absolute_tolerance == pytest.approx(1e-10)
+    assert step._rr.integrator.relative_tolerance == pytest.approx(1e-8)
+
+
 def test_tellurium_steady_state_step(core):
     """SteadyStateStep loads a model and returns species concentrations at equilibrium.
 
