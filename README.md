@@ -62,7 +62,16 @@ Config (all optional, one of `model`/`model_file` required):
 ### `TelluriumStep` (Step)
 
 One-shot trajectory Step. Extra config: `start_time`, `end_time`, `n_points`,
-`selections`. Outputs: `time_series` (list), `species_trajectories` (map[list]).
+`output_times`, `selections`. Outputs: `time_series` (list),
+`species_trajectories` (map[list]).
+
+`output_times` is an explicit, possibly non-uniform list of output time points
+(assumed sorted ascending). When non-empty, the time course is sampled at
+exactly those times (roadrunner `simulate(times=[...])`), overriding the
+uniform `start_time`/`end_time`/`n_points` grid, and the returned `time_series`
+is those points verbatim. Empty (the default) keeps the uniform behavior. It
+composes with `selections` and `species_units`. The key name matches the
+viva-copasi wrapper (copasi's term is `values`, tellurium's is `times`).
 
 `selections` is a list of roadrunner selection strings (e.g. `'time'`, `'S1'`,
 `'[S1]'` for a concentration, a reaction id for a flux). Empty (the default)

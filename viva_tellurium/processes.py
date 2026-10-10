@@ -318,6 +318,15 @@ class TelluriumUTCStep(BaseTelluriumStep):
         'start_time': {'_type': 'float', '_default': 0.0},
         'end_time': {'_type': 'float', '_default': 10.0},
         'n_points': {'_type': 'integer', '_default': 101},
+        # Explicit, possibly non-uniform output time points (assumed sorted
+        # ascending). When non-empty, the time course is sampled at EXACTLY
+        # these times via roadrunner's `simulate(times=[...])`, overriding the
+        # uniform start_time/end_time/n_points grid; the returned time_series is
+        # these points verbatim. Empty (the default) preserves the uniform
+        # behavior. Same key name/semantics as the viva-copasi wrapper
+        # (copasi's term is 'values', tellurium's is 'times'; issue #11 /
+        # viva-copasi #16).
+        'output_times': {'_type': 'list[float]', '_default': []},
     }
 
     def inputs(self):
@@ -336,6 +345,19 @@ class TelluriumUTCStep(BaseTelluriumStep):
         start = self.config['start_time']
         end = self.config['end_time']
         n_points = self.config['n_points']
+        output_times = list(self.config.get('output_times') or [])
+
+        def _simulate():
+            """Run the time course, honoring explicit output_times when set.
+
+            When output_times is non-empty, roadrunner samples at exactly those
+            points via simulate(times=[...]); otherwise the uniform
+            start/end/n_points grid is used. The active selections list has
+            already been set on self._rr by the caller.
+            """
+            if output_times:
+                return self._rr.simulate(times=[float(t) for t in output_times])
+            return self._rr.simulate(start, end, n_points)
 
         if selections:
             # Honor the user's exact roadrunner selection list. Columns come
@@ -344,11 +366,15 @@ class TelluriumUTCStep(BaseTelluriumStep):
             # verbatim — no bracket stripping. 'time', if requested, is pulled
             # out into time_series; every other selection becomes a column.
             self._rr.selections = selections
-            result = self._rr.simulate(start, end, n_points)
+            result = _simulate()
             cols = list(result.colnames)
             time_idx = cols.index('time') if 'time' in cols else None
             if time_idx is not None:
                 times = [float(x) for x in result[:, time_idx]]
+            elif output_times:
+                # Caller did not request 'time' but gave explicit output points;
+                # those ARE the time grid.
+                times = [float(t) for t in output_times]
             else:
                 # Caller did not request 'time'; reconstruct the uniform grid
                 # so the time_series output contract still holds.
@@ -377,7 +403,7 @@ class TelluriumUTCStep(BaseTelluriumStep):
         else:
             self._rr.selections = ['time'] + [
                 f'[{sid}]' for sid in self._species_ids]
-        result = self._rr.simulate(start, end, n_points)
+        result = _simulate()
 
         cols = list(result.colnames)
         times = [float(x) for x in result[:, 0]]
