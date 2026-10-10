@@ -22,6 +22,20 @@ model lotka
 end
 """
 
+# Compartment C has a NON-UNIT volume (5), so amount != concentration and the
+# conversion is observable. S1 is a normal (concentration-based) species;
+# S2 is substanceOnly (hasOnlySubstanceUnits=true). The issue (#14) is about
+# returning these consistently regardless of that flag.
+MODEL_UNITS = """
+model units_test
+  compartment C = 5;
+  species S1 in C = 20;
+  substanceOnly species S2 in C = 30;
+  S1 -> S2; k*S1; k = 0.1;
+end
+"""
+COMPARTMENT_VOLUME = 5.0
+
 
 @pytest.fixture
 def core():
@@ -292,6 +306,128 @@ def test_steady_state_selections(core):
     import math
     for v in concs.values():
         assert isinstance(v, float) and math.isfinite(v)
+
+
+# --- species_units (amount vs concentration, issue #14) --------------------
+
+def test_species_units_defaults_to_concentration(core):
+    """The species_units config defaults to 'concentration'."""
+    step = TelluriumUTCStep(config={'model': MODEL_DECAY}, core=core)
+    assert step.config['species_units'] == 'concentration'
+
+
+def test_utc_default_output_is_concentration(core):
+    """With no species_units key, the default UTC output is concentration
+    (pre-existing behavior pinned): for MODEL_UNITS, S1 conc=20, S2 conc=6."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_UNITS, 'start_time': 0.0,
+                'end_time': 5.0, 'n_points': 2},
+        core=core)
+    out = step.update({})
+    traj = out['species_trajectories']
+    assert set(traj.keys()) == {'S1', 'S2'}
+    assert traj['S1'][0] == pytest.approx(20.0)
+    assert traj['S2'][0] == pytest.approx(6.0)
+
+
+def test_utc_species_units_amount(core):
+    """species_units='amount' returns amounts for ALL floating species,
+    including the hasOnlySubstanceUnits=true one (S2), converted with the
+    compartment volume: amount = concentration * volume."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_UNITS, 'start_time': 0.0,
+                'end_time': 5.0, 'n_points': 2,
+                'species_units': 'amount'},
+        core=core)
+    out = step.update({})
+    traj = out['species_trajectories']
+    assert set(traj.keys()) == {'S1', 'S2'}
+    # S1 conc 20 * 5 = 100; S2 conc 6 * 5 = 30 (S2 is substance-only)
+    assert traj['S1'][0] == pytest.approx(20.0 * COMPARTMENT_VOLUME)
+    assert traj['S2'][0] == pytest.approx(6.0 * COMPARTMENT_VOLUME)
+
+
+def test_utc_amount_vs_concentration_relationship(core):
+    """Across the whole trajectory, amount == concentration * volume for every
+    species, demonstrating consistent unit handling (not the raw simulator's
+    mixed amount/concentration default)."""
+    conc_step = TelluriumUTCStep(
+        config={'model': MODEL_UNITS, 'start_time': 0.0,
+                'end_time': 5.0, 'n_points': 6,
+                'species_units': 'concentration'},
+        core=core)
+    amt_step = TelluriumUTCStep(
+        config={'model': MODEL_UNITS, 'start_time': 0.0,
+                'end_time': 5.0, 'n_points': 6,
+                'species_units': 'amount'},
+        core=core)
+    conc = conc_step.update({})['species_trajectories']
+    amt = amt_step.update({})['species_trajectories']
+    for sid in ('S1', 'S2'):
+        for c, a in zip(conc[sid], amt[sid]):
+            assert a == pytest.approx(c * COMPARTMENT_VOLUME)
+
+
+def test_species_units_invalid_raises(core):
+    """An unknown species_units value fails loud."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_UNITS, 'species_units': 'particles'},
+        core=core)
+    with pytest.raises(ValueError):
+        step.update({})
+
+
+def test_has_only_substance_units_accessor(core):
+    """The wrapper notes each species' hasOnlySubstanceUnits flag."""
+    step = TelluriumUTCStep(config={'model': MODEL_UNITS}, core=core)
+    flags = step.get_has_only_substance_units()
+    assert flags['S1'] is False
+    assert flags['S2'] is True
+
+
+def test_initial_state_species_units_amount(core):
+    """initial_state honors species_units='amount'."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_UNITS, 'species_units': 'amount'}, core=core)
+    state = step.initial_state()
+    conc = state['species_concentrations']
+    assert conc['S1'] == pytest.approx(20.0 * COMPARTMENT_VOLUME)
+    assert conc['S2'] == pytest.approx(6.0 * COMPARTMENT_VOLUME)
+
+
+def test_steady_state_species_units_amount(core):
+    """Steady-state default output honors species_units='amount' (converted
+    with the compartment volume)."""
+    conc_step = TelluriumSteadyStateStep(
+        config={'model': MODEL_UNITS, 'species_units': 'concentration'},
+        core=core)
+    amt_step = TelluriumSteadyStateStep(
+        config={'model': MODEL_UNITS, 'species_units': 'amount'},
+        core=core)
+    conc = conc_step.update({})['steady_state_concentrations']
+    amt = amt_step.update({})['steady_state_concentrations']
+    assert set(conc.keys()) == {'S1', 'S2'} == set(amt.keys())
+    for sid in ('S1', 'S2'):
+        assert amt[sid] == pytest.approx(conc[sid] * COMPARTMENT_VOLUME)
+
+
+def test_explicit_selections_not_normalized_by_species_units(core):
+    """Explicit `selections` are roadrunner's vocabulary and are respected
+    VERBATIM even when species_units is set: `[S1]` stays concentration and
+    bare `S1` stays amount; species_units does not rewrite them."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_UNITS, 'start_time': 0.0,
+                'end_time': 5.0, 'n_points': 2,
+                'species_units': 'amount',
+                'selections': ['time', '[S1]', 'S2']},
+        core=core)
+    out = step.update({})
+    traj = out['species_trajectories']
+    assert set(traj.keys()) == {'[S1]', 'S2'}
+    # [S1] is a concentration (20) despite species_units='amount'
+    assert traj['[S1]'][0] == pytest.approx(20.0)
+    # bare S2 is an amount (30)
+    assert traj['S2'][0] == pytest.approx(30.0)
 
 
 def test_tellurium_steady_state_step(core):
