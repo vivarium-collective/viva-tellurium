@@ -578,6 +578,69 @@ def test_steady_state_solver_settings_accessor(core):
     assert 'relative_tolerance' in settings
 
 
+# --- Step idempotency (issue #21) -----------------------------------------
+# A zero-time process-bigraph Step must be a pure function of its config/inputs:
+# calling update() twice must return the same trajectory. The roadrunner
+# instance is kept between firings, so without a per-update reset the second
+# call continues from the first call's end-state.
+
+def test_utc_step_is_idempotent(core):
+    """Two consecutive UTC update() calls return identical trajectories."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'start_time': 0.0,
+                'end_time': 10.0, 'n_points': 11},
+        core=core)
+    first = step.update({})
+    second = step.update({})
+    assert second['time_series'] == pytest.approx(first['time_series'])
+    for sid in first['species_trajectories']:
+        assert second['species_trajectories'][sid] == pytest.approx(
+            first['species_trajectories'][sid])
+    # And explicitly: the final value matches (the issue's repro).
+    assert (second['species_trajectories']['S1'][-1]
+            == pytest.approx(first['species_trajectories']['S1'][-1]))
+
+
+def test_utc_step_idempotent_repro(core):
+    """The exact repro from issue #21: two update()s give the same final S."""
+    ant = 'model d; S=1; k=0.5; J: S -> ; k*S; end'
+    step = TelluriumUTCStep(
+        config={'model': ant, 'end_time': 5.0, 'n_points': 2}, core=core)
+    a = step.update({})['species_trajectories']['S'][-1]
+    b = step.update({})['species_trajectories']['S'][-1]
+    assert a == pytest.approx(b)
+
+
+def test_utc_step_idempotent_preserves_overrides(core):
+    """Per-update reset must not wipe configured overrides: repeated firings
+    still start from the overridden initial state."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'start_time': 0.0,
+                'end_time': 10.0, 'n_points': 11,
+                'species_overrides': {'S1': 50.0, 'S2': 5.0},
+                'parameter_overrides': {'k': 0.3}},
+        core=core)
+    first = step.update({})
+    second = step.update({})
+    # Each firing starts from the overridden S1=50.
+    assert first['species_trajectories']['S1'][0] == pytest.approx(50.0)
+    assert second['species_trajectories']['S1'][0] == pytest.approx(50.0)
+    assert (second['species_trajectories']['S1']
+            == pytest.approx(first['species_trajectories']['S1']))
+
+
+def test_steady_state_step_is_idempotent(core):
+    """Two consecutive steady-state update() calls return identical results."""
+    step = TelluriumSteadyStateStep(
+        config={'model': MODEL_OSC, 'model_format': 'antimony'},
+        core=core)
+    first = step.update({})['steady_state_concentrations']
+    second = step.update({})['steady_state_concentrations']
+    assert set(first.keys()) == set(second.keys())
+    for sid in first:
+        assert second[sid] == pytest.approx(first[sid])
+
+
 def test_tellurium_steady_state_step(core):
     """SteadyStateStep loads a model and returns species concentrations at equilibrium.
 

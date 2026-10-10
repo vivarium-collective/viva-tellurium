@@ -262,6 +262,26 @@ class BaseTelluriumStep(Step):
         if cfg['seed'] >= 0 and hasattr(self._rr.integrator, 'seed'):
             self._rr.integrator.seed = int(cfg['seed'])
 
+    def _reset_to_initial(self):
+        """Reset the roadrunner instance to its configured initial state.
+
+        A zero-time process-bigraph Step must be a pure function of its config
+        and inputs, but roadrunner keeps state between simulate() calls. Call
+        this at the START of every Step update() so each firing begins from the
+        same initial conditions instead of continuing from the previous end
+        state (issue #21). reset() returns the model to its SBML/antimony
+        initial values, so the configured species/parameter overrides — which
+        set only the CURRENT values at init time — are re-applied afterwards.
+        The time-coupled *Process* classes deliberately do NOT do this; their
+        cross-interval statefulness is intentional.
+        """
+        self._rr.reset()
+        cfg = self.config
+        for sid, val in cfg.get('species_overrides', {}).items():
+            self._rr[sid] = float(val)
+        for pid, val in cfg.get('parameter_overrides', {}).items():
+            self._rr[pid] = float(val)
+
     def _read_substance_unit_flags(self):
         """Return {species_id: hasOnlySubstanceUnits(bool)} for floating
         species, read from the model's SBML via libSBML. Best-effort: returns
@@ -340,6 +360,9 @@ class TelluriumUTCStep(BaseTelluriumStep):
 
     def update(self, state):
         self._tellurium_initialize()
+        # Steps are zero-time pure functions: start each firing from the
+        # configured initial state so update() is idempotent (issue #21).
+        self._reset_to_initial()
 
         selections = list(self.config.get('selections') or [])
         start = self.config['start_time']
@@ -491,6 +514,9 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
 
     def update(self, state):
         self._tellurium_initialize()
+        # Start each firing from the configured initial state so the solve is
+        # idempotent and independent of prior firings (issue #21).
+        self._reset_to_initial()
         self._apply_steady_state_options()
 
         selections = list(self.config.get('selections') or [])
