@@ -210,6 +210,90 @@ def test_step_defaults_unchanged(core):
     assert step._rr.integrator.relative_tolerance == pytest.approx(1e-8)
 
 
+def test_utc_default_selections_unchanged(core):
+    """Without a `selections` key, UTC output is time + all floating species
+    (bracket-stripped), exactly the pre-existing behavior."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'start_time': 0.0,
+                'end_time': 10.0, 'n_points': 11},
+        core=core)
+    result = step.update({})
+    assert result['time_series'][0] == 0.0
+    assert result['time_series'][-1] == 10.0
+    assert set(result['species_trajectories'].keys()) == {'S1', 'S2'}
+
+
+def test_utc_selections_specific_species(core):
+    """A `selections` list makes the output columns exactly the requested
+    roadrunner selections (here a single concentration `[S1]`)."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'start_time': 0.0,
+                'end_time': 10.0, 'n_points': 11,
+                'selections': ['time', '[S1]']},
+        core=core)
+    result = step.update({})
+    # time is pulled out into time_series; the rest are the requested columns.
+    assert set(result['species_trajectories'].keys()) == {'[S1]'}
+    assert len(result['species_trajectories']['[S1]']) == 11
+    assert len(result['time_series']) == 11
+    assert result['time_series'][0] == 0.0
+    # S2 was NOT requested, so it must be absent.
+    assert 'S2' not in result['species_trajectories']
+    assert '[S2]' not in result['species_trajectories']
+
+
+def test_utc_selections_reaction_flux(core):
+    """Reaction fluxes (not just species) can be selected."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_OSC, 'start_time': 0.0,
+                'end_time': 5.0, 'n_points': 6,
+                'selections': ['time', 'J2']},
+        core=core)
+    result = step.update({})
+    assert set(result['species_trajectories'].keys()) == {'J2'}
+    assert len(result['species_trajectories']['J2']) == 6
+
+
+def test_utc_selections_without_time(core):
+    """When `time` is not requested, time_series falls back to the uniform
+    grid so the output contract still holds."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'start_time': 0.0,
+                'end_time': 10.0, 'n_points': 11,
+                'selections': ['[S1]']},
+        core=core)
+    result = step.update({})
+    assert set(result['species_trajectories'].keys()) == {'[S1]'}
+    assert len(result['time_series']) == 11
+    assert result['time_series'][0] == 0.0
+    assert result['time_series'][-1] == 10.0
+
+
+def test_steady_state_default_selections_unchanged(core):
+    """Without `selections`, steady state returns floating-species
+    concentrations keyed by species id, as before."""
+    step = TelluriumSteadyStateStep(
+        config={'model': MODEL_DECAY, 'model_format': 'antimony'},
+        core=core)
+    out = step.update({})
+    assert set(out['steady_state_concentrations'].keys()) == {'S1', 'S2'}
+
+
+def test_steady_state_selections(core):
+    """A `selections` list drives roadrunner's steadyStateSelections so the
+    output keys are exactly the requested selections."""
+    step = TelluriumSteadyStateStep(
+        config={'model': MODEL_DECAY, 'model_format': 'antimony',
+                'selections': ['[S1]', '[S2]']},
+        core=core)
+    out = step.update({})
+    concs = out['steady_state_concentrations']
+    assert set(concs.keys()) == {'[S1]', '[S2]'}
+    import math
+    for v in concs.values():
+        assert isinstance(v, float) and math.isfinite(v)
+
+
 def test_tellurium_steady_state_step(core):
     """SteadyStateStep loads a model and returns species concentrations at equilibrium.
 
