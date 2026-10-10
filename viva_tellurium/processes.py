@@ -194,6 +194,9 @@ class BaseTelluriumStep(Step):
     specific simulation they perform (UTC, steady state, etc.).
     """
 
+    # Valid values for the species_units config key.
+    _SPECIES_UNITS = ('concentration', 'amount')
+
     config_schema = {
         **TelluriumProcess.config_schema,
         # Roadrunner output selections. A list of selection strings
@@ -203,12 +206,28 @@ class BaseTelluriumStep(Step):
         # concentrations for a steady state. Kept identical to the viva-copasi
         # and viva-biomodels wrappers for cross-wrapper consistency.
         'selections': {'_type': 'list[string]', '_default': []},
+        # Units for the DEFAULT floating-species output (i.e. when `selections`
+        # is empty). 'concentration' (the default) or 'amount'. Raw roadrunner
+        # mixes these: bare 'S1' is an amount while '[S1]' is a concentration,
+        # and the auto-selected default depends on each species'
+        # hasOnlySubstanceUnits flag. This key hides that inconsistency and
+        # returns every floating species in ONE unit, converting with the
+        # compartment volume (via roadrunner, which respects
+        # hasOnlySubstanceUnits). Explicit `selections` are NOT affected — they
+        # stay roadrunner's verbatim vocabulary. Identical key name/semantics
+        # to the viva-copasi wrapper (issue #14 / viva-copasi#18).
+        'species_units': {'_type': 'string', '_default': 'concentration'},
     }
 
     def _tellurium_initialize(self):
         if hasattr(self, '_rr'):
             return
         cfg = self.config
+        units = cfg.get('species_units', 'concentration')
+        if units not in self._SPECIES_UNITS:
+            raise ValueError(
+                f"species_units must be one of {self._SPECIES_UNITS}, "
+                f"got {units!r}.")
         if not cfg['model'] and not cfg['model_file']:
             raise ValueError(
                 "Tellurium step requires either 'model' or 'model_file'.")
@@ -220,6 +239,12 @@ class BaseTelluriumStep(Step):
         self._species_ids = list(self._rr.getFloatingSpeciesIds())
         self._reaction_ids = list(self._rr.getReactionIds())
         self._species_index = {sid: i for i, sid in enumerate(self._species_ids)}
+        # Note each floating species' hasOnlySubstanceUnits flag (issue #14).
+        # Informational / for conversion-correctness checks; the actual
+        # amount<->concentration conversion is done by roadrunner's
+        # getFloatingSpeciesAmounts/Concentrations, which use compartment
+        # volume and honor this flag internally.
+        self._has_only_substance_units = self._read_substance_unit_flags()
 
         # Apply species and parameter overrides
         for sid, val in cfg.get('species_overrides', {}).items():
@@ -237,14 +262,43 @@ class BaseTelluriumStep(Step):
         if cfg['seed'] >= 0 and hasattr(self._rr.integrator, 'seed'):
             self._rr.integrator.seed = int(cfg['seed'])
 
+    def _read_substance_unit_flags(self):
+        """Return {species_id: hasOnlySubstanceUnits(bool)} for floating
+        species, read from the model's SBML via libSBML. Best-effort: returns
+        {} if libSBML is unavailable or the model cannot be parsed."""
+        flags = {}
+        try:
+            import libsbml
+            doc = libsbml.readSBMLFromString(self._rr.getCurrentSBML())
+            model = doc.getModel()
+            if model is not None:
+                for i in range(model.getNumSpecies()):
+                    sp = model.getSpecies(i)
+                    flags[sp.getId()] = bool(sp.getHasOnlySubstanceUnits())
+        except Exception:
+            pass
+        return flags
+
+    def get_has_only_substance_units(self):
+        """Return the cached {species_id: hasOnlySubstanceUnits} mapping."""
+        self._tellurium_initialize()
+        return dict(self._has_only_substance_units)
+
+    def _read_default_species(self):
+        """Return {species_id: value} for all floating species in the
+        configured species_units. Uses roadrunner's amount/concentration
+        accessors, which convert using compartment volume and respect each
+        species' hasOnlySubstanceUnits flag."""
+        rr = self._rr
+        if self.config.get('species_units', 'concentration') == 'amount':
+            vals = rr.getFloatingSpeciesAmounts()
+        else:
+            vals = rr.getFloatingSpeciesConcentrations()
+        return {sid: float(vals[i]) for i, sid in enumerate(self._species_ids)}
+
     def initial_state(self):
         self._tellurium_initialize()
-        conc = self._rr.getFloatingSpeciesConcentrations()
-        return {
-            'species_concentrations': {
-                sid: float(conc[i]) for i, sid in enumerate(self._species_ids)
-            }
-        }
+        return {'species_concentrations': self._read_default_species()}
 
     def inputs(self):
         return {}
@@ -310,7 +364,19 @@ class TelluriumUTCStep(BaseTelluriumStep):
                 'species_trajectories': species,
             }
 
-        # Default: roadrunner emits time + all floating species.
+        # Default: time + all floating species, in the configured species_units
+        # (issue #14). We set an explicit selection list rather than relying on
+        # roadrunner's auto-default, so every species comes back in the SAME
+        # unit regardless of its hasOnlySubstanceUnits flag: '[S1]' for
+        # concentration, bare 'S1' for amount. Output keys are the plain
+        # species ids either way (brackets stripped); only the values' unit
+        # changes.
+        units = self.config.get('species_units', 'concentration')
+        if units == 'amount':
+            self._rr.selections = ['time'] + list(self._species_ids)
+        else:
+            self._rr.selections = ['time'] + [
+                f'[{sid}]' for sid in self._species_ids]
         result = self._rr.simulate(start, end, n_points)
 
         cols = list(result.colnames)
@@ -319,7 +385,8 @@ class TelluriumUTCStep(BaseTelluriumStep):
         for i, col in enumerate(cols):
             if i == 0:
                 continue
-            # Column names look like '[S1]' — strip brackets
+            # Column names look like '[S1]' (concentration) or 'S1' (amount) —
+            # strip brackets so keys are plain species ids.
             name = col.strip('[]')
             species[name] = [float(x) for x in result[:, i]]
 
@@ -372,10 +439,5 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
         except Exception as e:
             raise RuntimeError(f"Tellurium steadyState() failed: {e}")
 
-        conc_ss = self._rr.getFloatingSpeciesConcentrations()
-        species_ss = {
-            sid: float(conc_ss[i])
-            for i, sid in enumerate(self._species_ids)
-        }
-
-        return {'steady_state_concentrations': species_ss}
+        # Default output in the configured species_units (issue #14).
+        return {'steady_state_concentrations': self._read_default_species()}
