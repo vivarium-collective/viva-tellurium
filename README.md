@@ -61,8 +61,17 @@ Config (all optional, one of `model`/`model_file` required):
 
 ### `TelluriumStep` (Step)
 
-One-shot trajectory Step. Extra config: `start_time`, `end_time`, `n_points`.
-Outputs: `time_series` (list), `species_trajectories` (map[list]).
+One-shot trajectory Step. Extra config: `start_time`, `end_time`, `n_points`,
+`selections`. Outputs: `time_series` (list), `species_trajectories` (map[list]).
+
+`selections` is a list of roadrunner selection strings (e.g. `'time'`, `'S1'`,
+`'[S1]'` for a concentration, a reaction id for a flux). Empty (the default)
+keeps roadrunner's built-in output — time + all floating species for a time
+course, and floating-species concentrations for a steady state. When set, the
+trajectory/steady-state keys are exactly the requested selections (`'time'`,
+if requested in a time course, is pulled out into `time_series`). The
+steady-state step uses roadrunner's `steadyStateSelections` path. The key name
+and semantics match the viva-copasi and viva-biomodels wrappers.
 
 ### `make_tellurium_document(...)`
 

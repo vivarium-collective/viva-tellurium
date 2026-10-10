@@ -196,6 +196,13 @@ class BaseTelluriumStep(Step):
 
     config_schema = {
         **TelluriumProcess.config_schema,
+        # Roadrunner output selections. A list of selection strings
+        # (e.g. 'time', 'S1', '[S1]' for concentration, a reaction id for a
+        # flux). Empty (the default) preserves roadrunner's built-in output:
+        # time + all floating species for a time course, and floating-species
+        # concentrations for a steady state. Kept identical to the viva-copasi
+        # and viva-biomodels wrappers for cross-wrapper consistency.
+        'selections': {'_type': 'list[string]', '_default': []},
     }
 
     def _tellurium_initialize(self):
@@ -271,10 +278,40 @@ class TelluriumUTCStep(BaseTelluriumStep):
     def update(self, state):
         self._tellurium_initialize()
 
-        result = self._rr.simulate(
-            self.config['start_time'],
-            self.config['end_time'],
-            self.config['n_points'])
+        selections = list(self.config.get('selections') or [])
+        start = self.config['start_time']
+        end = self.config['end_time']
+        n_points = self.config['n_points']
+
+        if selections:
+            # Honor the user's exact roadrunner selection list. Columns come
+            # back named exactly as requested (e.g. '[S1]', a reaction id for
+            # a flux), so the trajectory keys are the requested selections
+            # verbatim — no bracket stripping. 'time', if requested, is pulled
+            # out into time_series; every other selection becomes a column.
+            self._rr.selections = selections
+            result = self._rr.simulate(start, end, n_points)
+            cols = list(result.colnames)
+            time_idx = cols.index('time') if 'time' in cols else None
+            if time_idx is not None:
+                times = [float(x) for x in result[:, time_idx]]
+            else:
+                # Caller did not request 'time'; reconstruct the uniform grid
+                # so the time_series output contract still holds.
+                import numpy as np
+                times = [float(x) for x in np.linspace(start, end, n_points)]
+            species = {
+                col: [float(x) for x in result[:, i]]
+                for i, col in enumerate(cols)
+                if i != time_idx
+            }
+            return {
+                'time_series': times,
+                'species_trajectories': species,
+            }
+
+        # Default: roadrunner emits time + all floating species.
+        result = self._rr.simulate(start, end, n_points)
 
         cols = list(result.colnames)
         times = [float(x) for x in result[:, 0]]
@@ -311,6 +348,24 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
 
     def update(self, state):
         self._tellurium_initialize()
+
+        selections = list(self.config.get('selections') or [])
+        if selections:
+            # Steady state has its own selection path: steadyStateSelections +
+            # getSteadyStateValues(). Values come back in the order of the
+            # requested selections, so the output keys are the selections
+            # verbatim (e.g. '[S1]' for a concentration, a reaction id for a
+            # flux). Note: 'time' is not a valid steady-state selection.
+            self._rr.steadyStateSelections = selections
+            try:
+                self._rr.steadyState()
+            except Exception as e:
+                raise RuntimeError(f"Tellurium steadyState() failed: {e}")
+            vals = self._rr.getSteadyStateValues()
+            species_ss = {
+                sel: float(vals[i]) for i, sel in enumerate(selections)
+            }
+            return {'steady_state_concentrations': species_ss}
 
         try:
             self._rr.steadyState()
