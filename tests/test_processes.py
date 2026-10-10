@@ -430,6 +430,86 @@ def test_explicit_selections_not_normalized_by_species_units(core):
     assert traj['S2'][0] == pytest.approx(30.0)
 
 
+# --- output_times (non-uniform time course, issue #11) ---------------------
+
+def test_output_times_defaults_empty(core):
+    """Unset output_times behaves as empty (uniform behavior), matching the
+    `selections` convention where an empty-list default is absent from config."""
+    step = TelluriumUTCStep(config={'model': MODEL_DECAY}, core=core)
+    assert (step.config.get('output_times') or []) == []
+
+
+def test_utc_output_times_explicit_points(core):
+    """A non-uniform output_times list yields rows at EXACTLY those times,
+    overriding the uniform n_points/start/end grid."""
+    times = [0.0, 0.1, 0.5, 2.0]
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'output_times': times},
+        core=core)
+    result = step.update({})
+    assert result['time_series'] == pytest.approx(times)
+    s1 = result['species_trajectories']['S1']
+    assert len(s1) == len(times)
+    # S1 decays monotonically from 10
+    assert s1[0] == pytest.approx(10.0)
+    assert all(a >= b for a, b in zip(s1, s1[1:]))
+
+
+def test_utc_output_times_overrides_npoints(core):
+    """output_times takes precedence over n_points: the row count matches the
+    explicit list, not n_points."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'n_points': 999,
+                'output_times': [0.0, 1.0, 3.0]},
+        core=core)
+    result = step.update({})
+    assert len(result['time_series']) == 3
+    assert result['time_series'] == pytest.approx([0.0, 1.0, 3.0])
+
+
+def test_utc_output_times_with_selections(core):
+    """output_times composes with an explicit `selections` list: the requested
+    columns are returned, sampled at the explicit time points."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY,
+                'selections': ['time', '[S1]'],
+                'output_times': [0.0, 0.2, 1.0, 4.0]},
+        core=core)
+    result = step.update({})
+    assert result['time_series'] == pytest.approx([0.0, 0.2, 1.0, 4.0])
+    assert set(result['species_trajectories'].keys()) == {'[S1]'}
+    assert len(result['species_trajectories']['[S1]']) == 4
+
+
+def test_utc_output_times_with_species_units_amount(core):
+    """output_times composes with species_units='amount': amounts are returned
+    at the explicit time points (amount == concentration * volume)."""
+    times = [0.0, 1.0, 5.0]
+    step = TelluriumUTCStep(
+        config={'model': MODEL_UNITS, 'species_units': 'amount',
+                'output_times': times},
+        core=core)
+    out = step.update({})
+    assert out['time_series'] == pytest.approx(times)
+    traj = out['species_trajectories']
+    assert set(traj.keys()) == {'S1', 'S2'}
+    # S1 conc 20 * volume 5 = 100 at t0
+    assert traj['S1'][0] == pytest.approx(20.0 * COMPARTMENT_VOLUME)
+    assert traj['S2'][0] == pytest.approx(6.0 * COMPARTMENT_VOLUME)
+
+
+def test_utc_output_times_empty_is_uniform(core):
+    """An empty output_times preserves the uniform n_points behavior."""
+    step = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'start_time': 0.0,
+                'end_time': 10.0, 'n_points': 11, 'output_times': []},
+        core=core)
+    result = step.update({})
+    assert len(result['time_series']) == 11
+    assert result['time_series'][0] == 0.0
+    assert result['time_series'][-1] == 10.0
+
+
 # --- steady-state solver options (issue #15) ------------------------------
 
 def test_steady_state_options_applied_to_solver(core):
