@@ -430,6 +430,74 @@ def test_explicit_selections_not_normalized_by_species_units(core):
     assert traj['S2'][0] == pytest.approx(30.0)
 
 
+# --- steady-state solver options (issue #15) ------------------------------
+
+def test_steady_state_options_applied_to_solver(core):
+    """steady_state_options are pushed onto roadrunner's steady-state SOLVER
+    (getSteadyStateSolver()), distinct from the time-integrator tolerances."""
+    step = TelluriumSteadyStateStep(
+        config={
+            'model': MODEL_DECAY,
+            'steady_state_options': {
+                'maximum_iterations': 250,
+                'allow_presimulation': True,
+                'approx_tolerance': 1e-4,
+            },
+        }, core=core)
+    step.update({})
+    solver = step._rr.getSteadyStateSolver()
+    assert solver.getValue('maximum_iterations') == 250
+    assert solver.getValue('allow_presimulation') is True
+    assert solver.getValue('approx_tolerance') == pytest.approx(1e-4)
+
+
+def test_steady_state_options_default_unchanged(core):
+    """With no steady_state_options, the solver keeps roadrunner's defaults."""
+    step = TelluriumSteadyStateStep(
+        config={'model': MODEL_DECAY}, core=core)
+    step.update({})
+    solver = step._rr.getSteadyStateSolver()
+    # roadrunner (nleq2) defaults
+    assert solver.getValue('maximum_iterations') == 100
+    assert solver.getValue('allow_presimulation') is False
+
+
+def test_steady_state_options_with_selections(core):
+    """steady_state_options are applied regardless of the selections path."""
+    step = TelluriumSteadyStateStep(
+        config={
+            'model': MODEL_DECAY,
+            'selections': ['[S1]', '[S2]'],
+            'steady_state_options': {'maximum_iterations': 175},
+        }, core=core)
+    out = step.update({})
+    assert set(out['steady_state_concentrations'].keys()) == {'[S1]', '[S2]'}
+    assert step._rr.getSteadyStateSolver().getValue('maximum_iterations') == 175
+
+
+def test_steady_state_options_invalid_key_raises(core):
+    """An unknown steady-state solver option fails loud."""
+    step = TelluriumSteadyStateStep(
+        config={
+            'model': MODEL_DECAY,
+            'steady_state_options': {'not_a_real_option': 5},
+        }, core=core)
+    with pytest.raises(ValueError):
+        step.update({})
+
+
+def test_steady_state_solver_settings_accessor(core):
+    """The accessor reports the current steady-state solver settings."""
+    step = TelluriumSteadyStateStep(
+        config={
+            'model': MODEL_DECAY,
+            'steady_state_options': {'maximum_iterations': 42},
+        }, core=core)
+    settings = step.get_steady_state_solver_settings()
+    assert settings['maximum_iterations'] == 42
+    assert 'relative_tolerance' in settings
+
+
 def test_tellurium_steady_state_step(core):
     """SteadyStateStep loads a model and returns species concentrations at equilibrium.
 
