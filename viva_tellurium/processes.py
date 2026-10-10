@@ -402,10 +402,36 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
     Loads the model and computes steady-state species concentrations
     rather than a trajectory. Use when you want the equilibrium state
     of an SBML/antimony model.
+
+    Config (in addition to BaseTelluriumStep):
+        steady_state_options: Dict of {option_name: value} for roadrunner's
+            steady-state solver, applied before steadyState(). Distinct from
+            the integrator tolerances/seed (those tune CVODE; these tune the
+            steady-state solver). See the config_schema comment and
+            get_steady_state_solver_settings() for the available options.
     """
 
     config_schema = {
         **BaseTelluriumStep.config_schema,
+        # Options for roadrunner's steady-state SOLVER
+        # (rr.getSteadyStateSolver()), applied before steadyState(). This is
+        # distinct from the integrator-level absolute_tolerance/
+        # relative_tolerance/seed inherited from BaseTelluriumStep: those tune
+        # the TIME integrator (CVODE), while these tune the steady-state solver
+        # itself (nleq2 by default). A dict of {option_name: value} using
+        # roadrunner's own vocabulary, e.g. 'maximum_iterations',
+        # 'relative_tolerance' (solver, not integrator), 'minimum_damping',
+        # 'allow_presimulation', 'presimulation_time', 'presimulation_times',
+        # 'presimulation_maximum_steps', 'allow_approx', 'approx_tolerance',
+        # 'approx_maximum_steps', 'approx_time', 'auto_moiety_analysis',
+        # 'broyden_method', 'linearity'. Enumerate the live set via
+        # get_steady_state_solver_settings(). Empty (the default) leaves the
+        # solver at roadrunner's defaults. Free-form map (not individual typed
+        # keys) because the set is solver-specific and values are mixed-type
+        # (bool/int/float/list). The copasi sibling (viva-copasi #19) uses the
+        # same container key name `steady_state_options` with COPASI's own
+        # option names (same `method`-vs-`integrator` precedent).
+        'steady_state_options': {'_type': 'map', '_default': {}},
     }
 
     def outputs(self):
@@ -413,8 +439,33 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
             'steady_state_concentrations': 'overwrite[map[float]]',
         }
 
+    def _apply_steady_state_options(self):
+        """Push the configured steady_state_options onto roadrunner's
+        steady-state solver. Fails loud on an unknown/unsettable option."""
+        options = self.config.get('steady_state_options') or {}
+        if not options:
+            return
+        solver = self._rr.getSteadyStateSolver()
+        for name, value in options.items():
+            try:
+                solver.setValue(name, value)
+            except Exception as e:
+                valid = ', '.join(solver.getSettings())
+                raise ValueError(
+                    f"Invalid steady-state solver option {name!r}: {e}. "
+                    f"Valid roadrunner steady-state options: {valid}.")
+
+    def get_steady_state_solver_settings(self):
+        """Return {option_name: current_value} for roadrunner's steady-state
+        solver, with any configured steady_state_options applied."""
+        self._tellurium_initialize()
+        self._apply_steady_state_options()
+        solver = self._rr.getSteadyStateSolver()
+        return {name: solver.getValue(name) for name in solver.getSettings()}
+
     def update(self, state):
         self._tellurium_initialize()
+        self._apply_steady_state_options()
 
         selections = list(self.config.get('selections') or [])
         if selections:
