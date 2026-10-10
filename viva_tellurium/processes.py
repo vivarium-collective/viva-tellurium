@@ -224,6 +224,11 @@ class BaseTelluriumStep(Step):
         integrator = cfg.get('integrator', 'cvode')
         if integrator and integrator != 'cvode':
             self._rr.setIntegrator(integrator)
+        if integrator == 'cvode':
+            self._rr.integrator.absolute_tolerance = cfg['absolute_tolerance']
+            self._rr.integrator.relative_tolerance = cfg['relative_tolerance']
+        if cfg['seed'] >= 0 and hasattr(self._rr.integrator, 'seed'):
+            self._rr.integrator.seed = int(cfg['seed'])
 
     def initial_state(self):
         self._tellurium_initialize()
