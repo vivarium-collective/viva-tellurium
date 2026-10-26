@@ -14,6 +14,7 @@ dependencies = [
     "bigraph-schema",
     "viva-superpowers",
     "tellurium>=2.2",
+    "libroadrunner>=2.11.0",
     "numpy",
     "pyyaml",
 ]
