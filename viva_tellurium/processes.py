@@ -12,6 +12,24 @@ import numpy as np
 
 from process_bigraph import Process, Step
 
+try:
+    # Structured process contract (summary + governing equations + symbol
+    # legend) surfaced in the vivarium-workbench bigraph-loom node inspector.
+    # Guarded because older bigraph_schema releases predate this module; the
+    # loom renderer (vivarium_workbench.lib.process_docs._contract_for_class)
+    # duck-types either a ProcessContract (.to_dict()) or a plain dict, so the
+    # fallback below renders identically where a newer bigraph_schema is not
+    # installed. Purely descriptive metadata — no runtime behavior depends on it.
+    from bigraph_schema.contract import ProcessContract
+except Exception:  # pragma: no cover - depends on installed bigraph_schema
+    ProcessContract = None
+
+
+def _contract(**fields):
+    """A ProcessContract when the installed bigraph_schema provides one, else an
+    equivalent plain dict (the loom renderer accepts both)."""
+    return ProcessContract(**fields) if ProcessContract is not None else dict(fields)
+
 
 def _load_roadrunner(model_source, model_format='antimony', model_file=''):
     """Build a RoadRunner instance from an Antimony string, SBML string, or file."""
@@ -122,6 +140,72 @@ class TelluriumProcess(Process):
         # floating species is settable.
         'conserved_moiety_analysis': {'_type': 'boolean', '_default': False},
     }
+
+    # Integration contract. The kinetic model is user-authored Antimony/SBML, so
+    # the specific reaction equations are not fixed here; this contract specifies
+    # how the ODE system is advanced each coupling interval and what the ports mean.
+    contract = _contract(
+        summary=(
+            "Advances a user-authored Antimony/SBML kinetic model one coupling "
+            "interval by integrating its ODE system dX/dt = f(X, p; t) with "
+            "libroadrunner (CVODE)."),
+        math=[
+            r"\frac{dX}{dt} = f(X,\, p;\, t) = S\, v(X,\, p)",
+            r"X(t + \Delta t) = \mathrm{CVODE}\big(f,\, X(t),\, [t,\, t + \Delta t]\big)",
+            r"v = v(X,\, p) \quad\text{(reaction-rate vector returned on the } \texttt{rates} \text{ port)}",
+            r"\text{coupled mode: } X_{n+1} = X_n + \textstyle\sum_i \big(X^{(i)} - X_n\big)",
+        ],
+        symbols={
+            "X": "floating-species state vector (concentrations by default, or amounts), ordered by getFloatingSpeciesIds",
+            "p": "global kinetic parameters of the model",
+            "t": "simulation time",
+            r"\Delta t": "coupling interval advanced per update() call",
+            "f": "ODE right-hand side assembled by libroadrunner from the model's reactions",
+            "S": "stoichiometry matrix",
+            "v": "reaction-rate (flux) vector",
+            r"X^{(i)}": "the i-th coupled arm's post-step state in operator-split (coupled_species) mode",
+        },
+        inputs={
+            "species": (
+                "optional incoming floating-species state pushed into roadrunner "
+                "before the step (numpy array ordered by getFloatingSpeciesIds "
+                "when bulk_species=True, else a {species_id: value} map); in "
+                "coupled_species mode this is the shared-store baseline the arm "
+                "starts from"),
+        },
+        outputs={
+            "species": "post-step floating-species state (overwrite; an ADDITIVE delta in coupled_species mode)",
+            "rates": "{reaction_id: rate} reaction velocities v at the new state (getReactionRates)",
+            "parameters": "{parameter_id: value} global parameter values",
+            "time": "roadrunner current time after the step",
+        },
+        config={
+            "model": "Antimony or SBML source string",
+            "model_format": "'antimony' (default) or 'sbml'",
+            "model_file": "optional path to a local .ant/.txt/.xml model (takes precedence over model)",
+            "integrator": "'cvode' (deterministic, default) or 'gillespie' (stochastic SSA)",
+            "absolute_tolerance": "CVODE absolute tolerance",
+            "relative_tolerance": "CVODE relative tolerance",
+            "seed": "random seed for stochastic integrators (-1 = unset)",
+            "species_overrides": "{species_id: initial_value} applied after model load",
+            "parameter_overrides": "{parameter_id: value} applied after model load",
+            "reset_on_init": "reset() after applying overrides (default True)",
+            "bulk_species": "species port as a numpy Array via roadrunner's bulk C API (default True) vs a legacy map[float]",
+            "coupled_species": "operator-split mode: additive species deltas that SUM under multi-process reconcile",
+            "conserved_moiety_analysis": "let roadrunner slave moiety-dependent species to conservation laws",
+        },
+        assumptions=[
+            "Deterministic CVODE (BDF) integration by default; stiffness is handled internally by CVODE. Set integrator='gillespie' for stochastic SSA.",
+            "The reaction network is user-authored (Antimony/SBML) and loaded at build time, so this contract specifies the integration and port semantics, not any specific reaction equations.",
+            "Species are reported as concentrations unless the model yields amounts; the state vector is ordered by getFloatingSpeciesIds.",
+            "update() is stateful across intervals (roadrunner carries state between calls); the Step variants reset each firing instead.",
+            "coupled_species assumes a Lie/Jacobi operator split across processes sharing one species store; each arm emits its own delta and the deltas sum under reconcile.",
+        ],
+        references=[
+            "Somogyi et al. (2015) libRoadRunner: a high performance SBML simulation and analysis library.",
+            "Hindmarsh et al. (2005) SUNDIALS: CVODE stiff/non-stiff ODE integration.",
+        ],
+    )
 
     def __init__(self, config=None, core=None):
         super().__init__(config=config, core=core)
@@ -520,6 +604,45 @@ class TelluriumUTCStep(BaseTelluriumStep):
         'output_times': {'_type': 'list[float]', '_default': []},
     }
 
+    contract = _contract(
+        summary=(
+            "One-shot uniform time course: integrates the model from start_time "
+            "to end_time with libroadrunner (CVODE) and returns the dense "
+            "trajectory as parallel time and per-species lists."),
+        math=[
+            r"\frac{dX}{dt} = f(X,\, p;\, t)",
+            r"X(t_k) = \mathrm{CVODE}\big(f,\, X(t_0),\, [t_0,\, t_k]\big),\quad k = 0 \ldots N-1",
+            r"t_k = t_0 + k\,\tfrac{t_{N-1} - t_0}{N-1} \quad\text{(or the explicit } \texttt{output\_times} \text{ grid)}",
+        ],
+        symbols={
+            "X": "floating-species state vector (concentration or amount per species_units)",
+            "f": "ODE right-hand side assembled by libroadrunner from the model's reactions",
+            "p": "global kinetic parameters",
+            "t_0": "start_time",
+            "t_{N-1}": "end_time",
+            "N": "number of output points (n_points)",
+            "t_k": "k-th output sample time",
+        },
+        inputs={},
+        outputs={
+            "time_series": "list of sample times t_k",
+            "species_trajectories": "{species_id (or selection): [value at each t_k]}",
+        },
+        config={
+            "start_time": "time course start (default 0.0)",
+            "end_time": "time course end (default 10.0)",
+            "n_points": "number of uniform output points (default 101)",
+            "output_times": "explicit (possibly non-uniform) output grid; overrides start/end/n_points when set",
+            "selections": "verbatim roadrunner selection strings; empty = time + all floating species",
+            "species_units": "'concentration' (default) or 'amount' for the default species output",
+        },
+        assumptions=[
+            "Zero-time pure Step: reset() to the configured initial state at the start of every update(), so the result is idempotent and independent of prior firings.",
+            "Deterministic CVODE integration; the reaction network is user-authored (Antimony/SBML).",
+            "output_times, when non-empty, samples at exactly those points and overrides the uniform grid.",
+        ],
+    )
+
     def inputs(self):
         return {}
 
@@ -653,6 +776,37 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
         # option names (same `method`-vs-`integrator` precedent).
         'steady_state_options': {'_type': 'map', '_default': {}},
     }
+
+    contract = _contract(
+        summary=(
+            "Solves for the steady state f(X, p) = 0 of the model via "
+            "roadrunner's steady-state solver (nleq2 by default) and returns the "
+            "equilibrium species concentrations."),
+        math=[
+            r"\frac{dX}{dt} = f(X,\, p) = 0",
+            r"X^{*} = \mathrm{steadyState}\big(f,\, X_0\big)",
+        ],
+        symbols={
+            "X^{*}": "steady-state (equilibrium) floating-species state vector",
+            "f": "ODE right-hand side assembled by libroadrunner from the model's reactions",
+            "p": "global kinetic parameters",
+            "X_0": "configured initial state the solve starts from (optionally after presimulation)",
+        },
+        inputs={},
+        outputs={
+            "steady_state_concentrations": "{species_id (or selection): steady-state value}",
+        },
+        config={
+            "steady_state_options": "map of roadrunner steady-state SOLVER options (e.g. maximum_iterations, allow_presimulation), distinct from the CVODE integrator tolerances",
+            "selections": "verbatim roadrunner steady-state selection strings; empty = all floating-species concentrations",
+            "species_units": "'concentration' (default) or 'amount' for the default output",
+        },
+        assumptions=[
+            "Zero-time pure Step: reset() to the configured initial state before every solve, so the result is idempotent and independent of prior firings.",
+            "A steady state is assumed to exist and the solver to converge; failure raises rather than returning a partial result.",
+            "The reaction network is user-authored (Antimony/SBML); the solver is roadrunner's nleq2 unless reconfigured via steady_state_options.",
+        ],
+    )
 
     def outputs(self):
         return {
