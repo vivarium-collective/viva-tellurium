@@ -178,14 +178,15 @@ def test_settable_subset_excludes_dependent_species():
     assert len(proc._settable_idx) == len(proc._settable_ids) < len(proc._species_ids)
 
 
-def test_single_process_paths_unchanged():
-    """Non-breaking: default and single-process bulk ports keep overwrite
-    semantics; coupled mode is strictly opt-in."""
+def test_default_is_bulk_array_legacy_map_opt_out():
+    """The DEFAULT single-process species port is now the bulk Array
+    (overwrite); the legacy per-species map[float] is an explicit opt-out via
+    bulk_species=False. Coupled mode remains strictly opt-in."""
     default = TelluriumProcess(config={'model': MODEL}, core=allocate_core())
-    assert default.outputs()['species'] == 'overwrite[map[float]]'
-    assert default.inputs()['species'] == 'maybe[map[float]]'
+    assert default.outputs()['species'].startswith('overwrite[array[')
+    assert default.inputs()['species'].startswith('maybe[array[')
 
-    bulk = TelluriumProcess(
-        config={'model': MODEL, 'bulk_species': True}, core=allocate_core())
-    assert bulk.outputs()['species'].startswith('overwrite[array[')
-    assert bulk.inputs()['species'].startswith('maybe[array[')
+    legacy = TelluriumProcess(
+        config={'model': MODEL, 'bulk_species': False}, core=allocate_core())
+    assert legacy.outputs()['species'] == 'overwrite[map[float]]'
+    assert legacy.inputs()['species'] == 'maybe[map[float]]'

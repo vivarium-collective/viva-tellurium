@@ -47,6 +47,18 @@ class TelluriumProcess(Process):
     species concentrations, reaction rates, parameter values, and the
     current time as overwrite values.
 
+    SPECIES PORT (important):
+      * DEFAULT (``bulk_species=True``): the ``species`` port is a numpy
+        ``array[(n,),float]`` ordered by ``getFloatingSpeciesIds`` and moved via
+        roadrunner's bulk C API — ~2x faster per update() and bit-identical.
+        Wire it to an Array-shaped store, not a dict.
+      * COUPLED multi-process composites (two+ processes sharing one species
+        store, operator-split): also set ``coupled_species=True`` — the species
+        output becomes an ADDITIVE array so the arms' deltas SUM under reconcile
+        instead of clobbering, and only the settable subset is written back.
+      * LEGACY (``bulk_species=False``): the old per-species ``map[float]`` port;
+        slower, kept only for back-compat with dict-shaped species stores.
+
     Config:
         model: Antimony or SBML source string.
         model_format: 'antimony' (default) or 'sbml'.
@@ -75,11 +87,15 @@ class TelluriumProcess(Process):
         'species_overrides': {'_type': 'map[float]', '_default': {}},
         'parameter_overrides': {'_type': 'map[float]', '_default': {}},
         'reset_on_init': {'_type': 'boolean', '_default': True},
-        # When True, the `species` port is a single numpy Array leaf (ordered
-        # by getFloatingSpeciesIds) pushed/pulled via roadrunner's bulk C API
+        # DEFAULT. The `species` port is a single numpy Array leaf (ordered by
+        # getFloatingSpeciesIds) pushed/pulled via roadrunner's bulk C API
         # instead of a per-species map[float] loop. Bit-identical; much lower
-        # set/get overhead (one buffer copy vs N string-keyed FFI calls).
-        'bulk_species': {'_type': 'boolean', '_default': False},
+        # set/get overhead (one buffer copy vs N string-keyed FFI calls) — ~2x
+        # faster whole update() at 17 species, more at larger models. This is
+        # the recommended path and is now the default; set bulk_species=False
+        # only for a legacy map[float] species port (slower; kept for back-compat
+        # with composites that wire a dict-shaped species store).
+        'bulk_species': {'_type': 'boolean', '_default': True},
         # Opt-in coupled / operator-split mode for COUPLED multi-process
         # composites (two+ TelluriumProcesses over complementary reaction
         # subsets sharing one `species` store, composed every coupling

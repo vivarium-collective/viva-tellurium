@@ -6,6 +6,12 @@ from process_bigraph.emitter import RAMEmitter
 from viva_tellurium.processes import TelluriumProcess
 from viva_tellurium.composites import make_tellurium_document
 
+import numpy as _np
+def _dsp(x):
+    """species (Array default, or legacy map) -> {id: value} for the decay demo (S1,S2)."""
+    if isinstance(x, dict): return dict(x)
+    return dict(zip(["S1","S2"], _np.asarray(x, dtype=float)))
+
 
 MODEL = """
 model decay
@@ -36,7 +42,7 @@ def test_composite_short_run(core):
 
     stores = sim.state['stores']
     assert 'species' in stores
-    assert stores['species']['S1'] < 10.0
+    assert _dsp(stores['species'])['S1'] < 10.0
     assert stores['time'] == pytest.approx(5.0)
 
 
@@ -50,7 +56,7 @@ def test_emitter_collects_timeseries(core):
     assert len(rows) >= 5
 
     # Energy-style monotonic check: S1 decreases over time
-    s1_vals = [r['species']['S1'] for r in rows if r.get('species')]
+    s1_vals = [_dsp(r['species'])['S1'] for r in rows if r.get('species') is not None and len(r['species'])]
     assert s1_vals[0] > s1_vals[-1]
 
 
@@ -65,7 +71,7 @@ def test_document_factory_with_overrides(core):
 
     stores = sim.state['stores']
     # Slower decay with k=0.1, starting from 50
-    assert stores['species']['S1'] > 30.0
+    assert _dsp(stores['species'])['S1'] > 30.0
     assert stores['parameters']['k'] == 0.1
 
 
@@ -89,14 +95,14 @@ def test_initial_state_emitted_at_t0(core):
     assert row0['time'] == 0.0
     assert row0.get('global_time') == 0.0
     # t=0 species/parameters are the model's initial state, not empty maps.
-    assert row0['species'] == {'S1': 10.0, 'S2': 0.0}
+    assert _dsp(row0['species']) == {'S1': 10.0, 'S2': 0.0}
     assert row0['parameters']['k'] == 0.3
 
     # Numerical behavior after t=0 is unchanged: S1 has decayed by step 1.
     row1 = rows[1]
     assert row1['time'] == pytest.approx(0.5)
-    assert row1['species']['S1'] < 10.0
-    assert row1['species']['S2'] > 0.0
+    assert _dsp(row1['species'])['S1'] < 10.0
+    assert _dsp(row1['species'])['S2'] > 0.0
 
 
 def test_roundtrip_species_conservation(core):
@@ -105,5 +111,5 @@ def test_roundtrip_species_conservation(core):
     sim = Composite({'state': doc}, core=core)
     sim.run(10.0)
     stores = sim.state['stores']
-    total = stores['species']['S1'] + stores['species']['S2']
+    total = _dsp(stores['species'])['S1'] + _dsp(stores['species'])['S2']
     assert total == pytest.approx(10.0, rel=1e-3)

@@ -46,6 +46,27 @@ def core():
     return c
 
 
+def sp(proc, d):
+    """Species as {id: value}, whether the port is an Array (default,
+    bulk_species=True) or a legacy map[float]."""
+    import numpy as np
+    s = d['species']
+    if isinstance(s, dict):
+        return dict(s)
+    return dict(zip(proc._species_ids, np.asarray(s, dtype=float)))
+
+
+def species_input(proc, **overrides):
+    """A species INPUT value matching the default Array port: the process's
+    current concentrations (ordered) with {id: value} overrides applied."""
+    import numpy as np
+    cur = np.asarray(proc._rr.getFloatingSpeciesConcentrations(), dtype=float).copy()
+    idx = {sid: i for i, sid in enumerate(proc._species_ids)}
+    for k, v in overrides.items():
+        cur[idx[k]] = float(v)
+    return {'species': cur}
+
+
 def test_instantiation(core):
     proc = TelluriumProcess(config={'model': MODEL_DECAY}, core=core)
     assert proc.config['integrator'] == 'cvode'
@@ -65,8 +86,9 @@ def test_initial_state(core):
     assert 'rates' in state
     assert 'parameters' in state
     assert 'time' in state
-    assert state['species']['S1'] == 10.0
-    assert state['species']['S2'] == 0.0
+    d = sp(proc, state)
+    assert d['S1'] == 10.0
+    assert d['S2'] == 0.0
     assert state['parameters']['k'] == 0.3
     assert state['time'] == 0.0
 
@@ -77,10 +99,11 @@ def test_single_update_advances_time(core):
     result = proc.update({}, interval=2.0)
     assert result['time'] == pytest.approx(2.0)
     # S1 should have decayed
-    assert result['species']['S1'] < 10.0
-    assert result['species']['S2'] > 0.0
+    d = sp(proc, result)
+    assert d['S1'] < 10.0
+    assert d['S2'] > 0.0
     # Conservation
-    total = result['species']['S1'] + result['species']['S2']
+    total = d['S1'] + d['S2']
     assert total == pytest.approx(10.0, rel=1e-4)
 
 
@@ -100,8 +123,9 @@ def test_species_overrides(core):
             'species_overrides': {'S1': 50.0, 'S2': 5.0},
         }, core=core)
     state = proc.initial_state()
-    assert state['species']['S1'] == 50.0
-    assert state['species']['S2'] == 5.0
+    d = sp(proc, state)
+    assert d['S1'] == 50.0
+    assert d['S2'] == 5.0
 
 
 def test_parameter_overrides(core):
@@ -119,10 +143,10 @@ def test_input_coupling(core):
     proc = TelluriumProcess(config={'model': MODEL_DECAY}, core=core)
     proc.initial_state()
     # Push S1 back up to 100, then simulate a tiny interval
-    result = proc.update({'species': {'S1': 100.0}}, interval=0.01)
+    result = proc.update(species_input(proc, S1=100.0), interval=0.01)
     # After a tiny interval with S1=100, rate k*S1 = 30 should have
     # consumed only a small amount, so S1 remains close to 100.
-    assert result['species']['S1'] > 90.0
+    assert sp(proc, result)['S1'] > 90.0
 
 
 def test_outputs_schema(core):
@@ -152,11 +176,11 @@ def test_gillespie_integrator(core):
             'species_overrides': {'S1': 100.0},
         }, core=core)
     state = proc.initial_state()
-    assert state['species']['S1'] == 100.0
+    assert sp(proc, state)['S1'] == 100.0
     result = proc.update({}, interval=5.0)
     # Gillespie advances stochastically; may finish early if no events remain.
     assert result['time'] > 0.0
-    assert result['species']['S1'] < 100.0
+    assert sp(proc, result)['S1'] < 100.0
 
 
 def test_tellurium_step(core):
