@@ -52,7 +52,7 @@ state:
     address: "local:RAMEmitter"
     config:
       emit:
-        species: "map[float]"
+        species: "array[float]"
         rates: "map[float]"
         parameters: "map[float]"
         time: "float"

@@ -46,18 +46,31 @@ print(gather_emitter_results(sim)[('emitter',)][-1]['species'])
 Time-driven bridge wrapping a RoadRunner instance. Lazy init; each `update()`
 advances by `interval`.
 
-| Port         | Dir    | Schema                  |
-|--------------|--------|-------------------------|
-| `species`    | input  | `maybe[map[float]]`     |
-| `species`    | output | `overwrite[map[float]]` |
-| `rates`      | output | `overwrite[map[float]]` |
-| `parameters` | output | `overwrite[map[float]]` |
-| `time`       | output | `overwrite[float]`      |
+**Species port is a bulk numpy `Array` by default** (`bulk_species=True`) — it's
+moved through roadrunner's bulk C API (one buffer copy instead of a per-species
+`map[float]` loop), ~2× faster per `update()` and bit-identical. Wire `species`
+to an Array-shaped store. The default ports:
+
+| Port         | Dir    | Schema (default, `bulk_species=True`) |
+|--------------|--------|---------------------------------------|
+| `species`    | input  | `maybe[array[(n,),float]]`            |
+| `species`    | output | `overwrite[array[(n,),float]]`        |
+| `rates`      | output | `overwrite[map[float]]`               |
+| `parameters` | output | `overwrite[map[float]]`               |
+| `time`       | output | `overwrite[float]`                    |
+
+`species` is ordered by `getFloatingSpeciesIds()`. For **coupled multi-process**
+composites (two+ processes sharing one species store), also set
+`coupled_species=True` — the species output becomes an *additive* array so the
+arms' deltas sum under reconcile. For the **legacy per-species `map[float]`**
+port (slower; only if a consumer needs a dict-shaped species store), set
+`bulk_species=False`.
 
 Config (all optional, one of `model`/`model_file` required):
 `model`, `model_format` (`'antimony'`/`'sbml'`), `model_file`, `integrator`
 (`'cvode'`/`'gillespie'`), `absolute_tolerance`, `relative_tolerance`,
-`seed`, `species_overrides`, `parameter_overrides`, `reset_on_init`.
+`seed`, `species_overrides`, `parameter_overrides`, `reset_on_init`,
+`bulk_species` (default `True`), `coupled_species`, `conserved_moiety_analysis`.
 
 ### `TelluriumStep` (Step)
 
