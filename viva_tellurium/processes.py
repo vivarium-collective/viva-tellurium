@@ -7,6 +7,9 @@ initialized on first update() call.
 
 import os
 from pathlib import Path
+
+import numpy as np
+
 from process_bigraph import Process, Step
 
 
@@ -72,6 +75,11 @@ class TelluriumProcess(Process):
         'species_overrides': {'_type': 'map[float]', '_default': {}},
         'parameter_overrides': {'_type': 'map[float]', '_default': {}},
         'reset_on_init': {'_type': 'boolean', '_default': True},
+        # When True, the `species` port is a single numpy Array leaf (ordered
+        # by getFloatingSpeciesIds) pushed/pulled via roadrunner's bulk C API
+        # instead of a per-species map[float] loop. Bit-identical; much lower
+        # set/get overhead (one buffer copy vs N string-keyed FFI calls).
+        'bulk_species': {'_type': 'boolean', '_default': False},
     }
 
     def __init__(self, config=None, core=None):
@@ -82,13 +90,23 @@ class TelluriumProcess(Process):
         self._parameter_ids = None
 
     def inputs(self):
+        if self.config.get('bulk_species'):
+            self._build()
+            n = len(self._species_ids)
+            return {'species': f'maybe[array[({n}),float]]'}
         return {
             'species': 'maybe[map[float]]',
         }
 
     def outputs(self):
+        if self.config.get('bulk_species'):
+            self._build()
+            n = len(self._species_ids)
+            species_type = f'overwrite[array[({n}),float]]'
+        else:
+            species_type = 'overwrite[map[float]]'
         return {
-            'species': 'overwrite[map[float]]',
+            'species': species_type,
             'rates': 'overwrite[map[float]]',
             'parameters': 'overwrite[map[float]]',
             'time': 'overwrite[float]',
@@ -139,7 +157,11 @@ class TelluriumProcess(Process):
 
     def _read_state(self):
         rr = self._rr
-        species = {sid: float(rr[sid]) for sid in self._species_ids}
+        if self.config.get('bulk_species'):
+            # Bulk C getter: one buffer copy, ordered by getFloatingSpeciesIds.
+            species = np.asarray(rr.getFloatingSpeciesConcentrations(), dtype=float)
+        else:
+            species = {sid: float(rr[sid]) for sid in self._species_ids}
         parameters = {pid: float(rr[pid]) for pid in self._parameter_ids}
         rates_arr = rr.getReactionRates()
         rates = {rid: float(rates_arr[i])
@@ -160,10 +182,16 @@ class TelluriumProcess(Process):
 
         # Push coupled species if wired
         incoming = state.get('species') if state else None
-        if incoming:
-            for sid, val in incoming.items():
-                if sid in self._species_ids:
-                    self._rr[sid] = float(val)
+        if incoming is not None:
+            if self.config.get('bulk_species'):
+                # Bulk C setter: one buffer copy vs N string-keyed FFI calls.
+                arr = np.asarray(incoming, dtype=float)
+                if arr.shape == (len(self._species_ids),):
+                    self._rr.model.setFloatingSpeciesConcentrations(arr)
+            else:
+                for sid, val in incoming.items():
+                    if sid in self._species_ids:
+                        self._rr[sid] = float(val)
 
         t0 = self._rr.getCurrentTime()
         self._rr.simulate(t0, t0 + interval, 2)
