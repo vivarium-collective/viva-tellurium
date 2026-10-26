@@ -80,6 +80,31 @@ class TelluriumProcess(Process):
         # instead of a per-species map[float] loop. Bit-identical; much lower
         # set/get overhead (one buffer copy vs N string-keyed FFI calls).
         'bulk_species': {'_type': 'boolean', '_default': False},
+        # Opt-in coupled / operator-split mode for COUPLED multi-process
+        # composites (two+ TelluriumProcesses over complementary reaction
+        # subsets sharing one `species` store, composed every coupling
+        # interval — a Lie/Jacobi operator split). Two things change vs the
+        # single-process path, both needed for correctness under multi-process
+        # reconcile and both bit-identical between the map[float] and the
+        # bulk-array representations:
+        #   1. The `species` OUTPUT becomes an ADDITIVE (delta) leaf instead of
+        #      an `overwrite[...]` leaf, so the two arms' contributions SUM
+        #      (Jacobi) under reconcile/apply rather than the second arm
+        #      clobbering the first. For map[float] this is a plain additive
+        #      `map[float]`; for bulk this is a plain additive `array[(n,)]`
+        #      (bigraph_schema's built-in `array` already sums on reconcile and
+        #      accumulates on apply — only the `overwrite` wrapper had to go).
+        #   2. update() pushes only the SETTABLE floating species back into
+        #      roadrunner (see conserved_moiety_analysis); assignment /
+        #      conservation-determined species are left to roadrunner.
+        'coupled_species': {'_type': 'boolean', '_default': False},
+        # When True, enable roadrunner conserved-moiety analysis so that
+        # moiety-dependent floating species are determined by their
+        # conservation law at runtime. In coupled mode the settable subset is
+        # then getIndependentFloatingSpeciesIds (the dependent species are NOT
+        # written back — roadrunner recomputes them). When False, every
+        # floating species is settable.
+        'conserved_moiety_analysis': {'_type': 'boolean', '_default': False},
     }
 
     def __init__(self, config=None, core=None):
@@ -88,23 +113,42 @@ class TelluriumProcess(Process):
         self._species_ids = None
         self._reaction_ids = None
         self._parameter_ids = None
+        # Settable-subset bookkeeping (coupled mode). The subset is the set of
+        # floating species we write back into roadrunner; the complement is
+        # left for roadrunner to determine from conservation/assignment rules.
+        self._settable_ids = None
+        self._settable_idx = None
 
     def inputs(self):
+        coupled = self.config.get('coupled_species')
         if self.config.get('bulk_species'):
             self._build()
             n = len(self._species_ids)
+            # Coupled mode always has the species store wired, so the port is a
+            # plain (non-maybe) array leaf — this also keeps the shared store's
+            # realized schema a plain Array (a maybe[array] store trips
+            # bigraph_schema's realize(Maybe) on ndarray defaults).
+            if coupled:
+                return {'species': f'array[({n}),float]'}
             return {'species': f'maybe[array[({n}),float]]'}
+        if coupled:
+            return {'species': 'map[float]'}
         return {
             'species': 'maybe[map[float]]',
         }
 
     def outputs(self):
+        coupled = self.config.get('coupled_species')
         if self.config.get('bulk_species'):
             self._build()
             n = len(self._species_ids)
-            species_type = f'overwrite[array[({n}),float]]'
+            # Coupled: ADDITIVE array leaf (deltas sum under reconcile/apply).
+            # Single-process: overwrite array leaf (absolute, last-write-wins).
+            species_type = (f'array[({n}),float]' if coupled
+                            else f'overwrite[array[({n}),float]]')
         else:
-            species_type = 'overwrite[map[float]]'
+            # Coupled: plain map[float] (additive). Single: overwrite[map[float]].
+            species_type = 'map[float]' if coupled else 'overwrite[map[float]]'
         return {
             'species': species_type,
             'rates': 'overwrite[map[float]]',
@@ -126,6 +170,12 @@ class TelluriumProcess(Process):
             model_format=cfg['model_format'],
             model_file=cfg['model_file'])
 
+        # Conserved-moiety analysis must be toggled before caching ids /
+        # independent-species sets, since it changes which floating species
+        # are reported independent vs dependent.
+        if cfg.get('conserved_moiety_analysis'):
+            self._rr.conservedMoietyAnalysis = True
+
         # Apply overrides
         for sid, val in cfg['species_overrides'].items():
             self._rr[sid] = float(val)
@@ -146,6 +196,20 @@ class TelluriumProcess(Process):
         self._species_ids = list(self._rr.getFloatingSpeciesIds())
         self._reaction_ids = list(self._rr.getReactionIds())
         self._parameter_ids = list(self._rr.getGlobalParameterIds())
+
+        # Settable-species subset (coupled mode). With conserved-moiety
+        # analysis on, the dependent floating species are slaved to their
+        # conservation law at runtime and must NOT be written back — so the
+        # settable subset is getIndependentFloatingSpeciesIds. Otherwise every
+        # floating species is settable.
+        if cfg.get('conserved_moiety_analysis'):
+            indep = set(self._rr.getIndependentFloatingSpeciesIds())
+            self._settable_ids = [s for s in self._species_ids if s in indep]
+        else:
+            self._settable_ids = list(self._species_ids)
+        index_of = {sid: i for i, sid in enumerate(self._species_ids)}
+        self._settable_idx = np.array(
+            [index_of[s] for s in self._settable_ids], dtype=np.int32)
 
         if cfg['reset_on_init']:
             # Reset AFTER caching IDs; preserve override values by re-applying
@@ -180,8 +244,13 @@ class TelluriumProcess(Process):
     def update(self, state, interval):
         self._build()
 
-        # Push coupled species if wired
         incoming = state.get('species') if state else None
+
+        if self.config.get('coupled_species'):
+            return self._coupled_update(incoming, interval)
+
+        # --- Single-process path (unchanged) ---------------------------------
+        # Push coupled species if wired
         if incoming is not None:
             if self.config.get('bulk_species'):
                 # Bulk C setter: one buffer copy vs N string-keyed FFI calls.
@@ -197,6 +266,64 @@ class TelluriumProcess(Process):
         self._rr.simulate(t0, t0 + interval, 2)
 
         return self._read_state()
+
+    def _coupled_update(self, incoming, interval):
+        """Operator-split (Jacobi) coupling step.
+
+        Re-synchronise roadrunner to the shared-store baseline (writing only
+        the SETTABLE floating species — feature 2), advance this arm's reaction
+        subset over `interval`, and emit the species change as an ADDITIVE
+        delta (feature 1). Under multi-process reconcile the arms' deltas SUM
+        into the shared store: x_{n+1} = x_n + sum_i (x_i - x_n).
+
+        The map[float] and bulk-array representations perform the identical
+        roadrunner operations and emit the identical numbers — only the
+        container type (dict vs ndarray) differs — so the two paths are
+        bit-identical.
+        """
+        rr = self._rr
+        n = len(self._species_ids)
+        bulk = self.config.get('bulk_species')
+
+        # Baseline = shared-store absolute concentrations this arm started from.
+        if incoming is not None:
+            if bulk:
+                baseline = np.asarray(incoming, dtype=float)
+            else:
+                baseline = np.array(
+                    [float(incoming.get(sid, rr[sid])) for sid in self._species_ids],
+                    dtype=float)
+        else:
+            baseline = np.asarray(
+                rr.getFloatingSpeciesConcentrations(), dtype=float)
+
+        # Settable-subset bulk setter: resync only the settable floating
+        # species; leave conservation/assignment-determined species to
+        # roadrunner. Index the baseline vector to the settable subset.
+        if baseline.shape == (n,) and self._settable_idx.size:
+            rr.model.setFloatingSpeciesConcentrations(
+                self._settable_idx, baseline[self._settable_idx])
+
+        t0 = rr.getCurrentTime()
+        rr.simulate(t0, t0 + interval, 2)
+
+        after = np.asarray(rr.getFloatingSpeciesConcentrations(), dtype=float)
+        delta = after - baseline
+
+        parameters = {pid: float(rr[pid]) for pid in self._parameter_ids}
+        rates_arr = rr.getReactionRates()
+        rates = {rid: float(rates_arr[i])
+                 for i, rid in enumerate(self._reaction_ids)}
+
+        species_out = delta if bulk else {
+            sid: float(delta[i]) for i, sid in enumerate(self._species_ids)}
+
+        return {
+            'species': species_out,
+            'rates': rates,
+            'parameters': parameters,
+            'time': float(rr.getCurrentTime()),
+        }
 
     # Convenience accessors ------------------------------------------------
 
