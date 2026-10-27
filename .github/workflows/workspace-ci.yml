@@ -80,7 +80,7 @@ jobs:
           # Rendered from the workspace's pyproject.toml requires-python by
           # template-init.sh (">=3.12" -> "3.12", otherwise "3.11"). A
           # 3.12-only workspace must test on 3.12, not a hardcoded 3.11.
-          python-version: "{{ python_version }}"
+          python-version: "3.12"
       - name: Install uv
         run: pip install uv
       - name: Set up venv and install
