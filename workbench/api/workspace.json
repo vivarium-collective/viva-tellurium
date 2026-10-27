@@ -1,0 +1,1 @@
+{"name": "viva-tellurium", "description": "", "imports": {}, "investigations": [{"name": "tellurium-sbml-simulation", "title": "Tellurium sbml simulation", "status": "planning", "description": "Scaffolded from 2 composite generator(s) via `investigation-from-wrapper`. Fill in the narrative."}]}
