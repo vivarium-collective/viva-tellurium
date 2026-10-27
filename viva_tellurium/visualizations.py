@@ -35,8 +35,11 @@ class SpeciesTimeSeriesPlots(Visualization):
         self.history: dict[str, list[float]] = {}
 
     def inputs(self):
+        # Accept the bulk Array species leaf (the post-#26 default, ordered by
+        # getFloatingSpeciesIds) as well as a legacy map[float]; accumulate()
+        # coerces both into a name->value sample.
         return {
-            'species': 'map[float]',
+            'species': 'array[float]',
             'time': 'float',
         }
 
@@ -46,15 +49,31 @@ class SpeciesTimeSeriesPlots(Visualization):
             t = float(len(self.times))
         self.times.append(float(t))
 
-        species = state.get('species') or {}
+        # Coerce species into a {name: value} sample. The bulk leaf arrives as a
+        # numpy Array (no names), so label it from the ``species_names`` config
+        # (ordered by getFloatingSpeciesIds) when given, else S1..Sn. A legacy
+        # map[float] is used as-is. ``x or {}`` is unsafe here — a numpy array's
+        # truth value is ambiguous — so branch on the type explicitly.
+        species = state.get('species')
+        if isinstance(species, dict):
+            sample = {k: float(v) for k, v in species.items()}
+        elif species is None:
+            sample = {}
+        else:
+            vals = [float(x) for x in list(species)]
+            names = (self.config or {}).get('species_names')
+            if not names or len(names) != len(vals):
+                names = [f"S{i + 1}" for i in range(len(vals))]
+            sample = dict(zip(names, vals))
+
         # Extend any newly-seen species with zeros so series stay aligned.
         n = len(self.times)
-        for sid in species:
+        for sid in sample:
             if sid not in self.history:
                 self.history[sid] = [0.0] * (n - 1)
         # Append the current sample for every known species.
         for sid in list(self.history.keys()):
-            v = species.get(sid)
+            v = sample.get(sid)
             self.history[sid].append(float(v) if v is not None else 0.0)
 
     def render(self):

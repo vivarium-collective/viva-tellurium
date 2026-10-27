@@ -45,6 +45,8 @@ state:
     address: "local:SpeciesTimeSeriesPlots"
     config:
       title: "${viz_title}"
+      # Labels for the bulk species Array (ordered by getFloatingSpeciesIds).
+      species_names: ["S1", "S2"]
     inputs:
       species: ["stores", "species"]
       time: ["stores", "time"]
