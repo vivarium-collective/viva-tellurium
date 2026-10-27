@@ -17,9 +17,17 @@ dependencies = [
     "libroadrunner>=2.11.0",
     "numpy",
     "pyyaml",
+    "bigraph-viz>=2.0.3",
+    "jsonschema[format-nongpl]>=4.21",
+    "jinja2>=3.1",
+    "pypdf>=4.0",
+    "matplotlib",
+    "plotly",
+    "vivarium-workbench",
 ]
 
 [project.optional-dependencies]
+cli = ["typer", "rich"]
 dev = ["pytest", "bigraph-viz", "matplotlib"]
 
 [tool.uv.sources]
@@ -27,3 +35,6 @@ viva-superpowers = { git = "https://github.com/vivarium-collective/viva-superpow
 
 [tool.setuptools.packages.find]
 include = ["viva_tellurium*", "pbg_tellurium"]  # pbg_tellurium = deprecation shim
+
+[project.scripts]
+viva-tellurium = "viva_tellurium.cli.__main__:main"

@@ -1,0 +1,106 @@
+schema_version: 4
+name: decay-with-viz
+title: Decay with viz
+created: '2026-10-27'
+status: planned
+execution_status: planned
+verdict:
+phase: Design
+question: TBD — what question does this study answer?
+experiment: TBD — describe what viva_tellurium.composites.decay-with-viz is expected to demonstrate.
+description: Wraps the `viva_tellurium.composites.decay-with-viz` composite generator as a study. Fill in.
+baseline:
+- name: baseline
+  composite: viva_tellurium.composites.decay-with-viz
+  params: {}
+variants: []
+behavior_tests:
+- name: decay-with-viz-behaves
+  classification: primary
+  description: TBD — plain-language statement of the expected behavior.
+  measure:
+    kind: derived_scalar
+    field: TBD
+  pass_if:
+    op: <
+    value:
+  requires_simulation: baseline
+pipeline_gate:
+  prerequisites: []
+  enables: []
+  gate_evaluator:
+    result: blocked
+    blocked_by:
+    - decay-with-viz-behaves
+    evaluated_by: code
+    diverges_from_authored: false
+canonical_runs:
+- name: default
+  script: studies/decay-with-viz/sims/run.py
+  args: []
+  label: decay-with-viz
+  default: true
+visualizations:
+- name: decay-with-viz-world
+  view: world
+  status: stub
+  description: 'Fill in: the environment/state the study runs in.'
+- name: decay-with-viz-mechanism
+  view: mechanism
+  status: stub
+  description: 'Fill in: the mechanism/trajectory that drives the result.'
+- name: decay-with-viz-decision
+  view: decision
+  phase_map: true
+  grid_artifact: studies/decay-with-viz/grid/phase_map.parquet
+  status: stub
+  description: 'Fill in: phase map identifying PASS and FAILURE regions across a swept grid (not a single run). Built by sims/run.py''s grid sweep; persisted to grid_artifact.'
+findings: []
+confidence: Planned
+report:
+  verdict:
+result:
+runs:
+- name: viva_tellurium.composites.decay-with-viz__1793117306__820e89
+  status: completed
+  timestamp: 1793117310.141324
+  emitter:
+    kind: unknown
+  env_id: 7cc3eb8dbb26a325
+  params: '{}'
+  computed_outcomes:
+    decay-with-viz-behaves:
+      evaluated_by: agent
+      reason: observable 'TBD' not resolvable
+      reconcile: no_authored
+  provenance:
+    params:
+      n_steps:
+        value: 100
+        source: resolved
+    params_captured_at: '2026-10-27'
+    params_source: dashboard-runner
+  outcomes:
+    decay-with-viz-behaves:
+      result: SKIP
+      evaluated_by: agent
+      note: observable 'TBD' not resolvable
+      auto_evaluated: true
+- name: viva_tellurium.composites.decay-with-viz__1793117138__ac6de4
+  status: failed
+  timestamp: 1793117151.2508101
+  emitter:
+    kind: unknown
+  env_id: 7cc3eb8dbb26a325
+  params: '{}'
+  computed_outcomes:
+    decay-with-viz-behaves:
+      evaluated_by: agent
+      reason: observable 'TBD' not resolvable
+      reconcile: no_authored
+simulation_set:
+- name: baseline-baseline
+  kind: single
+  base_model: viva_tellurium.composites.decay-with-viz
+  is_baseline: true
+  status: ran

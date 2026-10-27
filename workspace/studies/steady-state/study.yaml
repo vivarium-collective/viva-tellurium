@@ -1,0 +1,97 @@
+schema_version: 4
+name: steady-state
+title: Steady state
+created: '2026-10-27'
+status: planned
+execution_status: planned
+verdict:
+phase: Design
+question: TBD — what question does this study answer?
+experiment: TBD — describe what viva_tellurium.composites.steady-state is expected to demonstrate.
+description: Wraps the `viva_tellurium.composites.steady-state` composite generator as a study. Fill in.
+baseline:
+- name: baseline
+  composite: viva_tellurium.composites.steady-state
+  params: {}
+variants: []
+behavior_tests:
+- name: steady-state-behaves
+  classification: primary
+  description: TBD — plain-language statement of the expected behavior.
+  measure:
+    kind: derived_scalar
+    field: TBD
+  pass_if:
+    op: <
+    value:
+  requires_simulation: baseline
+pipeline_gate:
+  prerequisites:
+  - study: decay-with-viz
+    condition: tests-passed
+    relation: builds-on
+  enables: []
+  gate_evaluator:
+    result: blocked
+    blocked_by:
+    - steady-state-behaves
+    evaluated_by: code
+    diverges_from_authored: false
+canonical_runs:
+- name: default
+  script: studies/steady-state/sims/run.py
+  args: []
+  label: steady-state
+  default: true
+visualizations:
+- name: steady-state-world
+  view: world
+  status: stub
+  description: 'Fill in: the environment/state the study runs in.'
+- name: steady-state-mechanism
+  view: mechanism
+  status: stub
+  description: 'Fill in: the mechanism/trajectory that drives the result.'
+- name: steady-state-decision
+  view: decision
+  phase_map: true
+  grid_artifact: studies/steady-state/grid/phase_map.parquet
+  status: stub
+  description: 'Fill in: phase map identifying PASS and FAILURE regions across a swept grid (not a single run). Built by sims/run.py''s grid sweep; persisted to grid_artifact.'
+findings: []
+confidence: Planned
+report:
+  verdict:
+result:
+runs:
+- name: viva_tellurium.composites.steady-state__1793117351__a1ed47
+  status: completed
+  timestamp: 1793117354.623786
+  emitter:
+    kind: unknown
+  env_id: 7cc3eb8dbb26a325
+  params: '{}'
+  computed_outcomes:
+    steady-state-behaves:
+      evaluated_by: agent
+      reason: observable 'TBD' not resolvable
+      reconcile: no_authored
+  provenance:
+    params:
+      n_steps:
+        value: 1
+        source: resolved
+    params_captured_at: '2026-10-27'
+    params_source: dashboard-runner
+  outcomes:
+    steady-state-behaves:
+      result: SKIP
+      evaluated_by: agent
+      note: observable 'TBD' not resolvable
+      auto_evaluated: true
+simulation_set:
+- name: baseline-baseline
+  kind: single
+  base_model: viva_tellurium.composites.steady-state
+  is_baseline: true
+  status: ran
