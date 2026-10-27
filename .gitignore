@@ -10,3 +10,16 @@ output/
 *.nc
 .idea/
 .DS_Store
+
+
+# Added by pbg-superpowers in-place scaffolder
+.pbg/*
+!.pbg/schemas/
+!.pbg/hpc.env.example
+investigations/*/runs.db
+investigations/*/viz/
+investigations/*/.run.lock
+workspace/reports/assets/*
+!workspace/reports/assets/.keep
+.superpowers/brainstorm/
+todo.md
