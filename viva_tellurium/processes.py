@@ -354,7 +354,7 @@ class TelluriumProcess(Process):
         if incoming is not None:
             if self.config.get('bulk_species'):
                 # Bulk C setter: one buffer copy vs N string-keyed FFI calls.
-                arr = np.asarray(incoming, dtype=float)
+                arr = self._as_species_array(incoming)
                 if arr.shape == (len(self._species_ids),):
                     self._rr.model.setFloatingSpeciesConcentrations(arr)
             else:
@@ -366,6 +366,15 @@ class TelluriumProcess(Process):
         self._rr.simulate(t0, t0 + interval, 2)
 
         return self._read_state()
+
+    def _as_species_array(self, incoming):
+        """Coerce species input to an ordered array; tolerate a dict port
+        (map[float]) even in bulk mode. Missing species -> 0.0."""
+        if isinstance(incoming, dict):
+            return np.array(
+                [float(incoming.get(sid, 0.0)) for sid in self._species_ids],
+                dtype=float)
+        return np.asarray(incoming, dtype=float)
 
     def _coupled_update(self, incoming, interval):
         """Operator-split (Jacobi) coupling step.
@@ -388,7 +397,7 @@ class TelluriumProcess(Process):
         # Baseline = shared-store absolute concentrations this arm started from.
         if incoming is not None:
             if bulk:
-                baseline = np.asarray(incoming, dtype=float)
+                baseline = self._as_species_array(incoming)
             else:
                 baseline = np.array(
                     [float(incoming.get(sid, rr[sid])) for sid in self._species_ids],
@@ -415,7 +424,7 @@ class TelluriumProcess(Process):
         rates = {rid: float(rates_arr[i])
                  for i, rid in enumerate(self._reaction_ids)}
 
-        species_out = delta if bulk else {
+        species_out = delta if (bulk and not isinstance(incoming, dict)) else {
             sid: float(delta[i]) for i, sid in enumerate(self._species_ids)}
 
         return {
