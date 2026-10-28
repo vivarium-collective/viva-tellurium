@@ -78,3 +78,18 @@ def test_bulk_accepts_array_input(core):
     out = bulk_proc.update({'species': np.ones(n) * 3.0}, 0.5)
     assert isinstance(out['species'], np.ndarray)
     assert out['species'].shape == (n,)
+
+
+def test_bulk_species_tolerates_dict_input():
+    """A map[float]-wired species port must not TypeError in bulk mode."""
+    from process_bigraph import allocate_core
+    from viva_tellurium.processes import TelluriumProcess
+    model = "S1 = 10; S2 = 2; k1 = 0.3; J1: S1 -> S2; k1*S1;"
+    for coupled in (False, True):
+        p = TelluriumProcess(
+            config={'model': model, 'bulk_species': True,
+                    'coupled_species': coupled},
+            core=allocate_core())
+        p._build()
+        out = p.update({'species': {'S1': 8.0}}, 0.5)
+        assert 'species' in out
