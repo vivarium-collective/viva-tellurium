@@ -139,6 +139,16 @@ class TelluriumProcess(Process):
         # written back — roadrunner recomputes them). When False, every
         # floating species is settable.
         'conserved_moiety_analysis': {'_type': 'boolean', '_default': False},
+        # First-class model ports (issue #12). When True, declare a
+        # `model_out` output port and emit the model's current SBML
+        # serialization (getCurrentSBML(), the END state after the update) on
+        # it. Default False so existing documents are byte-for-byte unchanged:
+        # the port is only declared, and the value only returned, when this is
+        # opted in. The complementary `model_in` INPUT port (maybe[string]) is
+        # always present and inert when unwired; a non-empty SBML string on it
+        # (re)loads the model with precedence over the config model. Inherited
+        # by the Step classes via config_schema spread.
+        'emit_model_out': {'_type': 'boolean', '_default': False},
     }
 
     # Integration contract. The kinetic model is user-authored Antimony/SBML, so
@@ -229,13 +239,18 @@ class TelluriumProcess(Process):
             # realized schema a plain Array (a maybe[array] store trips
             # bigraph_schema's realize(Maybe) on ndarray defaults).
             if coupled:
-                return {'species': f'array[({n}),float]'}
-            return {'species': f'maybe[array[({n}),float]]'}
-        if coupled:
-            return {'species': 'map[float]'}
-        return {
-            'species': 'maybe[map[float]]',
-        }
+                ports = {'species': f'array[({n}),float]'}
+            else:
+                ports = {'species': f'maybe[array[({n}),float]]'}
+        elif coupled:
+            ports = {'species': 'map[float]'}
+        else:
+            ports = {'species': 'maybe[map[float]]'}
+        # First-class model port (issue #12): SBML text in. Always declared,
+        # inert when unwired (maybe[string] default None); a non-empty string
+        # (re)loads the model with precedence over the config model.
+        ports['model_in'] = 'maybe[string]'
+        return ports
 
     def outputs(self):
         coupled = self.config.get('coupled_species')
@@ -249,12 +264,18 @@ class TelluriumProcess(Process):
         else:
             # Coupled: plain map[float] (additive). Single: overwrite[map[float]].
             species_type = 'map[float]' if coupled else 'overwrite[map[float]]'
-        return {
+        ports = {
             'species': species_type,
             'rates': 'overwrite[map[float]]',
             'parameters': 'overwrite[map[float]]',
             'time': 'overwrite[float]',
         }
+        # First-class model port (issue #12): SBML text out, opt-in via
+        # emit_model_out so existing documents are unaffected. Overwrite style
+        # matches the other scalar outputs (e.g. `time`).
+        if self.config.get('emit_model_out'):
+            ports['model_out'] = 'overwrite[string]'
+        return ports
 
     def _build(self):
         if self._rr is not None:
@@ -342,30 +363,84 @@ class TelluriumProcess(Process):
         return self._read_state()
 
     def update(self, state, interval):
-        self._build()
+        # First-class model port (issue #12): a non-empty SBML string on
+        # model_in (re)loads the model with precedence over the config model
+        # before this interval is simulated; otherwise build from config as
+        # usual. Loading from model_in does not require a config model, so we
+        # branch rather than always calling _build().
+        model_in = state.get('model_in') if state else None
+        if model_in:
+            self._reload_from_sbml(model_in)
+        else:
+            self._build()
 
         incoming = state.get('species') if state else None
 
         if self.config.get('coupled_species'):
-            return self._coupled_update(incoming, interval)
+            result = self._coupled_update(incoming, interval)
+        else:
+            # --- Single-process path (unchanged) -----------------------------
+            # Push coupled species if wired
+            if incoming is not None:
+                if self.config.get('bulk_species'):
+                    # Bulk C setter: one buffer copy vs N string-keyed FFI calls.
+                    arr = self._as_species_array(incoming)
+                    if arr.shape == (len(self._species_ids),):
+                        self._rr.model.setFloatingSpeciesConcentrations(arr)
+                else:
+                    for sid, val in incoming.items():
+                        if sid in self._species_ids:
+                            self._rr[sid] = float(val)
 
-        # --- Single-process path (unchanged) ---------------------------------
-        # Push coupled species if wired
-        if incoming is not None:
-            if self.config.get('bulk_species'):
-                # Bulk C setter: one buffer copy vs N string-keyed FFI calls.
-                arr = self._as_species_array(incoming)
-                if arr.shape == (len(self._species_ids),):
-                    self._rr.model.setFloatingSpeciesConcentrations(arr)
-            else:
-                for sid, val in incoming.items():
-                    if sid in self._species_ids:
-                        self._rr[sid] = float(val)
+            t0 = self._rr.getCurrentTime()
+            self._rr.simulate(t0, t0 + interval, 2)
 
-        t0 = self._rr.getCurrentTime()
-        self._rr.simulate(t0, t0 + interval, 2)
+            result = self._read_state()
 
-        return self._read_state()
+        # First-class model port (issue #12): emit the END-state SBML only when
+        # opted in, so existing documents are unaffected.
+        if self.config.get('emit_model_out'):
+            result['model_out'] = self.get_sbml()
+        return result
+
+    def _reload_from_sbml(self, sbml_text):
+        """(Re)load self._rr from SBML text arriving on the model_in port.
+
+        Takes precedence over the config model (issue #12). The config
+        species/parameter overrides are intentionally NOT re-applied and the
+        model is NOT reset: model_in carries the current state to continue
+        from (getCurrentSBML bakes current values as the model's initial
+        values). Reloading resets integrator internal state, which is accepted
+        per Lucian's #12 answer. Integrator settings and the id/settable-subset
+        caches are re-derived to match _build()'s post-load configuration.
+        """
+        cfg = self.config
+        self._rr = _load_roadrunner(sbml_text, model_format='sbml')
+
+        if cfg.get('conserved_moiety_analysis'):
+            self._rr.conservedMoietyAnalysis = True
+
+        integrator = cfg['integrator']
+        if integrator and integrator != 'cvode':
+            self._rr.setIntegrator(integrator)
+        if integrator == 'cvode':
+            self._rr.integrator.absolute_tolerance = cfg['absolute_tolerance']
+            self._rr.integrator.relative_tolerance = cfg['relative_tolerance']
+        if cfg['seed'] >= 0 and hasattr(self._rr.integrator, 'seed'):
+            self._rr.integrator.seed = int(cfg['seed'])
+
+        self._species_ids = list(self._rr.getFloatingSpeciesIds())
+        self._reaction_ids = list(self._rr.getReactionIds())
+        self._parameter_ids = list(self._rr.getGlobalParameterIds())
+
+        if cfg.get('conserved_moiety_analysis'):
+            indep = set(self._rr.getIndependentFloatingSpeciesIds())
+            self._settable_ids = [s for s in self._species_ids if s in indep]
+        else:
+            self._settable_ids = list(self._species_ids)
+        index_of = {sid: i for i, sid in enumerate(self._species_ids)}
+        self._settable_idx = np.array(
+            [index_of[s] for s in self._settable_ids], dtype=np.int32)
 
     def _as_species_array(self, incoming):
         """Coerce species input to an ordered array; tolerate a dict port
@@ -486,20 +561,34 @@ class BaseTelluriumStep(Step):
     def _tellurium_initialize(self):
         if hasattr(self, '_rr'):
             return
+        self._initialize_roadrunner(sbml_text=None)
+
+    def _initialize_roadrunner(self, sbml_text=None):
+        """Build and configure self._rr.
+
+        When ``sbml_text`` is given — a non-empty SBML string from the
+        ``model_in`` port (issue #12) — load it as SBML with precedence over
+        the config model and skip the config species/parameter overrides
+        (model_in carries the state to continue from). Otherwise load the
+        config model and apply the overrides, exactly as before.
+        """
         cfg = self.config
         units = cfg.get('species_units', 'concentration')
         if units not in self._SPECIES_UNITS:
             raise ValueError(
                 f"species_units must be one of {self._SPECIES_UNITS}, "
                 f"got {units!r}.")
-        if not cfg['model'] and not cfg['model_file']:
-            raise ValueError(
-                "Tellurium step requires either 'model' or 'model_file'.")
-        self._rr = _load_roadrunner(
-            cfg['model'],
-            model_format=cfg['model_format'],
-            model_file=cfg.get('model_file', ''),
-        )
+        if sbml_text:
+            self._rr = _load_roadrunner(sbml_text, model_format='sbml')
+        else:
+            if not cfg['model'] and not cfg['model_file']:
+                raise ValueError(
+                    "Tellurium step requires either 'model' or 'model_file'.")
+            self._rr = _load_roadrunner(
+                cfg['model'],
+                model_format=cfg['model_format'],
+                model_file=cfg.get('model_file', ''),
+            )
         self._species_ids = list(self._rr.getFloatingSpeciesIds())
         self._reaction_ids = list(self._rr.getReactionIds())
         self._species_index = {sid: i for i, sid in enumerate(self._species_ids)}
@@ -510,11 +599,13 @@ class BaseTelluriumStep(Step):
         # volume and honor this flag internally.
         self._has_only_substance_units = self._read_substance_unit_flags()
 
-        # Apply species and parameter overrides
-        for sid, val in cfg.get('species_overrides', {}).items():
-            self._rr[sid] = float(val)
-        for pid, val in cfg.get('parameter_overrides', {}).items():
-            self._rr[pid] = float(val)
+        # Apply species and parameter overrides (config-model load only; a
+        # model_in reload keeps the incoming state verbatim).
+        if not sbml_text:
+            for sid, val in cfg.get('species_overrides', {}).items():
+                self._rr[sid] = float(val)
+            for pid, val in cfg.get('parameter_overrides', {}).items():
+                self._rr[pid] = float(val)
 
         # Integrator selection
         integrator = cfg.get('integrator', 'cvode')
@@ -525,6 +616,29 @@ class BaseTelluriumStep(Step):
             self._rr.integrator.relative_tolerance = cfg['relative_tolerance']
         if cfg['seed'] >= 0 and hasattr(self._rr.integrator, 'seed'):
             self._rr.integrator.seed = int(cfg['seed'])
+
+    def _initialize_for_update(self, state):
+        """Honor the ``model_in`` input port at the start of a Step update():
+        a non-empty SBML string (re)loads the model with precedence over the
+        config model; otherwise initialize from config as usual (issue #12)."""
+        model_in = (state or {}).get('model_in')
+        if model_in:
+            self._initialize_roadrunner(sbml_text=model_in)
+        else:
+            self._tellurium_initialize()
+
+    def get_sbml(self):
+        """Return the current SBML serialization of the loaded model."""
+        self._tellurium_initialize()
+        return self._rr.getCurrentSBML()
+
+    def _maybe_model_out(self, result):
+        """Append ``model_out`` (the END-state SBML, getCurrentSBML()) to a
+        Step's update() return dict, but only when emit_model_out is set, so
+        existing documents are unaffected (issue #12)."""
+        if self.config.get('emit_model_out'):
+            result['model_out'] = self.get_sbml()
+        return result
 
     def _reset_to_initial(self):
         """Reset the roadrunner instance to its configured initial state.
@@ -585,7 +699,10 @@ class BaseTelluriumStep(Step):
         return {'species_concentrations': self._read_default_species()}
 
     def inputs(self):
-        return {}
+        # First-class model port (issue #12): SBML text in, inert when unwired
+        # (maybe[string], default None). A non-empty string (re)loads the model
+        # with precedence over the config model at the start of update().
+        return {'model_in': 'maybe[string]'}
 
 
 class TelluriumUTCStep(BaseTelluriumStep):
@@ -653,16 +770,21 @@ class TelluriumUTCStep(BaseTelluriumStep):
     )
 
     def inputs(self):
-        return {}
+        # First-class model port (issue #12), inert when unwired.
+        return {'model_in': 'maybe[string]'}
 
     def outputs(self):
-        return {
+        ports = {
             'time_series': 'overwrite[list]',
             'species_trajectories': 'overwrite[map[list]]',
         }
+        if self.config.get('emit_model_out'):
+            ports['model_out'] = 'overwrite[string]'
+        return ports
 
     def update(self, state):
-        self._tellurium_initialize()
+        # model_in takes precedence over the config model (issue #12).
+        self._initialize_for_update(state)
         # Steps are zero-time pure functions: start each firing from the
         # configured initial state so update() is idempotent (issue #21).
         self._reset_to_initial()
@@ -711,10 +833,10 @@ class TelluriumUTCStep(BaseTelluriumStep):
                 for i, col in enumerate(cols)
                 if i != time_idx
             }
-            return {
+            return self._maybe_model_out({
                 'time_series': times,
                 'species_trajectories': species,
-            }
+            })
 
         # Default: time + all floating species, in the configured species_units
         # (issue #14). We set an explicit selection list rather than relying on
@@ -742,10 +864,10 @@ class TelluriumUTCStep(BaseTelluriumStep):
             name = col.strip('[]')
             species[name] = [float(x) for x in result[:, i]]
 
-        return {
+        return self._maybe_model_out({
             'time_series': times,
             'species_trajectories': species,
-        }
+        })
 
 
 class TelluriumSteadyStateStep(BaseTelluriumStep):
@@ -818,9 +940,12 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
     )
 
     def outputs(self):
-        return {
+        ports = {
             'steady_state_concentrations': 'overwrite[map[float]]',
         }
+        if self.config.get('emit_model_out'):
+            ports['model_out'] = 'overwrite[string]'
+        return ports
 
     def _apply_steady_state_options(self):
         """Push the configured steady_state_options onto roadrunner's
@@ -847,7 +972,8 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
         return {name: solver.getValue(name) for name in solver.getSettings()}
 
     def update(self, state):
-        self._tellurium_initialize()
+        # model_in takes precedence over the config model (issue #12).
+        self._initialize_for_update(state)
         # Start each firing from the configured initial state so the solve is
         # idempotent and independent of prior firings (issue #21).
         self._reset_to_initial()
@@ -869,7 +995,8 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
             species_ss = {
                 sel: float(vals[i]) for i, sel in enumerate(selections)
             }
-            return {'steady_state_concentrations': species_ss}
+            return self._maybe_model_out(
+                {'steady_state_concentrations': species_ss})
 
         try:
             self._rr.steadyState()
@@ -877,4 +1004,5 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
             raise RuntimeError(f"Tellurium steadyState() failed: {e}")
 
         # Default output in the configured species_units (issue #14).
-        return {'steady_state_concentrations': self._read_default_species()}
+        return self._maybe_model_out(
+            {'steady_state_concentrations': self._read_default_species()})
