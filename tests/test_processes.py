@@ -1,5 +1,6 @@
 """Unit tests for TelluriumProcess."""
 
+import numpy as np
 import pytest
 from process_bigraph import allocate_core
 from viva_tellurium.processes import TelluriumProcess, TelluriumUTCStep, TelluriumSteadyStateStep
@@ -688,3 +689,131 @@ def test_tellurium_steady_state_step(core):
     for sid, val in concs.items():
         assert isinstance(val, float), f"{sid} is not float: {type(val)}"
         assert math.isfinite(val), f"{sid} steady-state concentration is not finite: {val}"
+
+
+# --- First-class model ports: model_in / model_out (issue #12) --------------
+#
+# SBML-text wire payload per Lucian Smith's confirmation on #12. model_in is a
+# maybe[string] input; when a non-empty SBML string arrives, the model is
+# (re)loaded from it with precedence over the config model (reloading resets
+# integrator internal state, which is accepted). model_out is an opt-in output
+# (config emit_model_out, default False) carrying getCurrentSBML() of the END
+# state, so default (unwired / opt-out) behavior is byte-for-byte unchanged.
+
+
+def test_model_in_port_declared_on_every_class(core):
+    """Each model-bearing class exposes a maybe[string] model_in input."""
+    for cls in (TelluriumProcess, TelluriumUTCStep, TelluriumSteadyStateStep):
+        inst = cls(config={'model': MODEL_DECAY}, core=core)
+        assert inst.inputs().get('model_in') == 'maybe[string]', cls.__name__
+
+
+def test_emit_model_out_gates_output_port(core):
+    """model_out appears in outputs() only when emit_model_out is True, and is
+    then an overwrite[string] on every class."""
+    for cls in (TelluriumProcess, TelluriumUTCStep, TelluriumSteadyStateStep):
+        off = cls(config={'model': MODEL_DECAY}, core=core)
+        assert 'model_out' not in off.outputs(), cls.__name__
+        on = cls(config={'model': MODEL_DECAY, 'emit_model_out': True}, core=core)
+        assert on.outputs().get('model_out') == 'overwrite[string]', cls.__name__
+
+
+def test_default_unchanged_no_model_out_in_update(core):
+    """Without emit_model_out and with model_in unwired, update() returns no
+    model_out key and the usual dynamics are unchanged."""
+    proc = TelluriumProcess(config={'model': MODEL_DECAY, 'bulk_species': False}, core=core)
+    proc.initial_state()
+    result = proc.update({}, interval=2.0)
+    assert 'model_out' not in result
+    # Known first-order decay: S1(2) = 10 * e^{-0.6} ~= 5.488 (unchanged).
+    assert result['species']['S1'] == pytest.approx(5.488, rel=1e-3)
+
+
+def test_model_out_then_model_in_continue_roundtrip(core):
+    """Emit model_out after one interval, load it as model_in on a fresh
+    instance, and continuing reproduces a single continuous run (the
+    'run -> capture here -> continue' semantics)."""
+    # Reference: one instance advances two intervals continuously.
+    ref = TelluriumProcess(config={'model': MODEL_DECAY, 'bulk_species': False}, core=core)
+    ref.initial_state()
+    ref.update({}, interval=2.0)
+    s1_ref_t4 = ref.update({}, interval=2.0)['species']['S1']
+
+    # Arm A: advance one interval and emit its end state as SBML.
+    a = TelluriumProcess(
+        config={'model': MODEL_DECAY, 'bulk_species': False, 'emit_model_out': True},
+        core=core)
+    a.initial_state()
+    a_end = a.update({}, interval=2.0)
+    assert 'model_out' in a_end
+    sbml = a_end['model_out']
+    assert '<sbml' in sbml
+    assert a_end['species']['S1'] == pytest.approx(5.488, rel=1e-3)
+
+    # Arm B: load A's end state via model_in and continue one interval.
+    b = TelluriumProcess(config={'model': MODEL_DECAY, 'bulk_species': False}, core=core)
+    b.initial_state()
+    b_end = b.update({'model_in': sbml}, interval=2.0)
+    assert b_end['species']['S1'] == pytest.approx(s1_ref_t4, rel=1e-4)
+
+
+def test_model_in_roundtrip_bulk_array_species(core):
+    """model_in round-trips in the default bulk (numpy array) species mode:
+    a reloaded instance's start state equals the emitter's end state."""
+    a = TelluriumProcess(config={'model': MODEL_DECAY, 'emit_model_out': True}, core=core)
+    a.initial_state()
+    a_end = a.update({}, interval=2.0)
+    sbml = a_end['model_out']
+
+    b = TelluriumProcess(config={'model': MODEL_DECAY}, core=core)
+    b.initial_state()
+    # Reload then advance a negligible interval; start state ~= A's end state.
+    b_mid = b.update({'model_in': sbml}, interval=1e-9)
+    assert np.allclose(
+        np.asarray(b_mid['species'], dtype=float),
+        np.asarray(a_end['species'], dtype=float),
+        rtol=1e-4, atol=1e-9)
+
+
+def test_model_in_takes_precedence_over_config_model(core):
+    """An instance configured with the decay model but handed the oscillator
+    on model_in loads the oscillator (its parameters and species)."""
+    osc_sbml = TelluriumProcess(config={'model': MODEL_OSC}, core=core).get_sbml()
+    proc = TelluriumProcess(config={'model': MODEL_DECAY}, core=core)
+    proc.initial_state()
+    result = proc.update({'model_in': osc_sbml}, interval=0.01)
+    assert set(result['parameters']) >= {'kg', 'kc', 'kd'}
+    assert 'k' not in result['parameters']
+    assert set(proc.get_species_ids()) == {'P', 'W'}
+
+
+def test_step_model_in_and_model_out(core):
+    """A UTCStep emits its end-of-trajectory SBML; a second UTCStep loading it
+    via model_in begins its trajectory from that end state."""
+    a = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'start_time': 0.0, 'end_time': 10.0,
+                'n_points': 11, 'emit_model_out': True},
+        core=core)
+    out_a = a.update({})
+    assert 'model_out' in out_a
+    sbml = out_a['model_out']
+    assert '<sbml' in sbml
+    s1_end_a = out_a['species_trajectories']['S1'][-1]
+
+    b = TelluriumUTCStep(
+        config={'model': MODEL_DECAY, 'start_time': 0.0, 'end_time': 10.0,
+                'n_points': 11},
+        core=core)
+    out_b = b.update({'model_in': sbml})
+    assert 'model_out' not in out_b
+    assert out_b['species_trajectories']['S1'][0] == pytest.approx(s1_end_a, rel=1e-4)
+
+
+def test_steadystate_step_emits_model_out(core):
+    """TelluriumSteadyStateStep includes model_out in its update() return when
+    emit_model_out is set."""
+    step = TelluriumSteadyStateStep(
+        config={'model': MODEL_DECAY, 'emit_model_out': True}, core=core)
+    out = step.update({})
+    assert 'steady_state_concentrations' in out
+    assert 'model_out' in out and '<sbml' in out['model_out']
