@@ -36,7 +36,9 @@ NO_SUPERPOWERS = textwrap.dedent(
 def test_default_path_loads_without_viva_superpowers():
     result = subprocess.run([sys.executable, "-c", NO_SUPERPOWERS], capture_output=True, text=True, timeout=300)
     assert result.returncode == 0, result.stderr[-2000:]
-    assert result.stdout.strip() == "ok"
+    # process-bigraph prints "skipping ... missing optional dep" notices to stdout for the dashboard modules; the
+    # signal is the final line.
+    assert result.stdout.strip().splitlines()[-1] == "ok", result.stdout
 
 
 def test_shipped_composite_emitter_address_resolves_on_build_core():
