@@ -20,7 +20,7 @@
   <div style="display:flex; align-items:center; gap:14px; justify-content:space-between;">
   <div style="display:flex; align-items:center; gap:12px; min-width:0; flex-wrap:wrap">
   <h1 class="study-title" style="margin:0">
-    <span class="study-name" id="study-name" data-slug="steady-state" data-study-kind="computational" title="steady-state">Steady state</span>
+    <span class="study-name" id="study-name" data-slug="steady-state" data-study-kind="computational" title="steady-state" data-edit-kind="study" data-edit-field="title" data-edit-value="Steady state" data-edit-label="Title">Steady state</span>
     
   </h1>
     
@@ -235,6 +235,9 @@
 /* findings */
 .findings-section{padding:14px 16px;background:#fafbff;border:1px solid #c7d2fe;border-radius:8px}
 .finding-card{padding:12px 14px;margin:10px 0;border:1px solid #e2e8f0;border-left:5px solid #6366f1;border-radius:6px;background:#fff}
+/* Brief highlight when an item is reached via a ?ev= evidence deep-link. */
+.ev-flash{animation:ev-flash-kf 1.9s ease-out;scroll-margin-top:12px}
+@keyframes ev-flash-kf{0%{box-shadow:0 0 0 3px #fbbf24}70%{box-shadow:0 0 0 3px rgba(251,191,36,0.45)}100%{box-shadow:0 0 0 0 rgba(251,191,36,0)}}
 .finding-card.finding-status-confirms{border-left-color:#10b981}
 .finding-card.finding-status-partial{border-left-color:#f59e0b}
 .finding-card.finding-status-contradicts{border-left-color:#dc2626}
@@ -551,7 +554,7 @@
     <div class="ctr-block">
       <h2 class="overview-label ctr-h">Background</h2>
       <div class="ctr-meta">
-        <div class="ctr-meta-row"><span class="ctr-meta-k">Question</span> <span class="ctr-meta-item">TBD — what question does this study answer?</span></div>
+        <div class="ctr-meta-row"><span class="ctr-meta-k">Question</span> <span class="ctr-meta-item" data-edit-kind="study" data-edit-field="question" data-edit-value="TBD — what question does this study answer?" data-edit-multiline data-edit-label="Question">TBD — what question does this study answer?</span></div>
         
       </div>
     </div>
@@ -575,7 +578,8 @@
 
     <div class="ctr-block">
       <h2 class="overview-label ctr-h">Result</h2>
-      <p class="ctr-text">behavior-tests: drift</p>
+      
+      <p class="ctr-text" data-edit-kind="study" data-edit-field="result" data-edit-value="behavior-tests: drift" data-edit-multiline data-edit-label="Result">behavior-tests: drift</p>
       
       
       <div class="ov-metrics">
@@ -600,11 +604,11 @@
       
       
       
-      <div class="finding-card finding-kind-computational finding-status-partial">
+      <div class="finding-card finding-kind-computational finding-status-partial" id="finding-report-card-behavior-tests">
         <details class="finding-details">
           <summary class="finding-row">
             <span class="finding-status-glyph">◐</span>
-            <span class="finding-claim finding-statement">behavior-tests: drift</span>
+            <span class="finding-claim finding-statement" data-edit-kind="study" data-edit-field="findings[report-card-behavior-tests].statement" data-edit-value="behavior-tests: drift" data-edit-multiline data-edit-label="Finding report-card-behavior-tests">behavior-tests: drift</span>
             
           </summary>
           <div class="finding-drawer">
@@ -890,6 +894,12 @@
   
   <div id="results-summary" data-study="steady-state" style="margin:0 0 16px"></div>
 
+  
+  <div id="gate-results-section" data-study="steady-state" style="margin:0 0 22px" hidden>
+    <h4>Gate results <span class="muted" style="font-size:0.8em;font-weight:normal">— each acceptance test's value, graded from run data</span></h4>
+    <div id="gate-results"></div>
+  </div>
+
   <h4>Latest run preview <span class="muted" style="font-size:0.8em;font-weight:normal">— downsampled sparkline + first/last/min/max per store</span></h4>
   <div id="results-preview" data-study="steady-state">
     <div class="viv-loading"><span class="viv-loading-spin" aria-hidden="true"></span><span>Loading results preview…</span></div>
@@ -1164,7 +1174,7 @@ pass_if: {"op": "\u003c", "value": null}</pre>
     
     <p class="muted small verdict-frozen-indicator" style="margin:0 0 8px 0"
        title="Content digest (sha256, sorted-key canonical JSON) of the frozen verdict payload — a locked record, not a live recompute.">
-      <span class="frozen-glyph">🔒</span> frozen 2026-10-27 16:21 UTC ·
+      <span class="frozen-glyph">🔒</span> frozen 2026-11-03 22:12 UTC ·
       <code style="font-family:ui-monospace,monospace">2affacb762</code>
     </p>
     
@@ -1324,11 +1334,12 @@ pass_if: {"op": "\u003c", "value": null}</pre>
 </section>
 
 </main>
-<script>window.__DASH_CONFIG__ = { mode: "snapshot", interactiveUrl: "https://github.com/vivarium-collective/viva-tellurium", basePath: "/viva-tellurium/workbench", inputsDownloadBase: "https://github.com/vivarium-collective/viva-tellurium/raw/main", provenance: {"repo_slug": "vivarium-collective/viva-tellurium", "repo_url": "https://github.com/vivarium-collective/viva-tellurium", "commit": "2661d23284f46d57fb851e8b28dda12a8cec8dac", "commit_url": "https://github.com/vivarium-collective/viva-tellurium/commit/2661d23284f46d57fb851e8b28dda12a8cec8dac", "branch": "main", "lockfile": "uv.lock@fa47af0f8158", "generated_at": "2026-10-27 16:22 UTC"} };</script>
+<script>window.__DASH_CONFIG__ = { mode: "snapshot", interactiveUrl: "https://github.com/vivarium-collective/viva-tellurium", basePath: "/viva-tellurium/workbench", inputsDownloadBase: "https://github.com/vivarium-collective/viva-tellurium/raw/main", provenance: {"repo_slug": "vivarium-collective/viva-tellurium", "repo_url": "https://github.com/vivarium-collective/viva-tellurium", "commit": "e056d3481daf0e6e0556c952d1088326d15d2309", "commit_url": "https://github.com/vivarium-collective/viva-tellurium/commit/e056d3481daf0e6e0556c952d1088326d15d2309", "branch": "main", "lockfile": "uv.lock@7ccc69a2377d", "generated_at": "2026-11-03 22:13 UTC"} };</script>
 <script src="/viva-tellurium/workbench/assets/data-source.js"></script>
 <script src="/viva-tellurium/workbench/assets/toast.js"></script>
 <script>
 window._studyName = "steady-state";
+window.__STUDY_INVESTIGATION__ = "tellurium-sbml-simulation";  // owning investigation (feedback save routing)
 window._study = null;  // populated by _bootstrapStudy() in study-detail.js
 
 // Save handler for the Conditions → Model settings editable rows.
@@ -1457,6 +1468,8 @@ window._seedFollowupProposal = _seedFollowupProposal;
 <script src="/viva-tellurium/workbench/assets/progress-track.js"></script>
 <script src="/viva-tellurium/workbench/assets/comparison-view.js"></script>
 <script src="/viva-tellurium/workbench/assets/study-detail.js"></script>
+<script src="/viva-tellurium/workbench/assets/study-feedback.js"></script>
+<script src="/viva-tellurium/workbench/assets/inline-edit.js"></script>
 <script>
 // Re-assert the refresh-aware seed handlers AFTER study-detail.js (which
 // defines its own navigate-away _seedFollowupStudy). The embedded

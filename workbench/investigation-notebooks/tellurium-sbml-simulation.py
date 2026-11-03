@@ -261,7 +261,7 @@ def _render_one(address, config, runs_db, study_yaml, overrides=None):
 
 # **Composite `viva_tellurium.composites.decay-with-viz`** — `spec_viva_tellurium_composites_decay_with_viz` (static spec file, editable dict)
 
-from viva_superpowers.composite_spec import load_spec
+from discovery_engine.composite_spec import load_spec
 spec_viva_tellurium_composites_decay_with_viz = load_spec(REPO / 'viva_tellurium/composites/decay-with-viz.composite.yaml')
 describe_spec(spec_viva_tellurium_composites_decay_with_viz)
 
@@ -299,7 +299,7 @@ if RERUN:
     from process_bigraph import Composite
     try:
         with quiet():  # keep per-step stdout out of the notebook
-            from viva_superpowers.composite_spec import build_composite_from_spec
+            from discovery_engine.composite_spec import build_composite_from_spec
             _comp = build_composite_from_spec(spec_viva_tellurium_composites_decay_with_viz, {'interval': INTERVAL_baseline}, core=core)
             _comp.run(STEPS_baseline)
         print('ran', 'baseline', f'(viva_tellurium.composites.decay-with-viz) for', STEPS_baseline, 'steps')
@@ -307,7 +307,7 @@ if RERUN:
         print(f"baseline not runnable yet: {type(_e).__name__}: {_e}")
     try:
         with quiet():  # keep per-step stdout out of the notebook
-            from viva_superpowers.composite_spec import build_composite_from_spec
+            from discovery_engine.composite_spec import build_composite_from_spec
             _comp = build_composite_from_spec(spec_viva_tellurium_composites_decay_with_viz, {'interval': INTERVAL_baseline}, core=core)
             _comp.run(STEPS_baseline)
         print('ran', 'baseline', f'(viva_tellurium.composites.decay-with-viz) for', STEPS_baseline, 'steps')
@@ -367,7 +367,7 @@ _save_viz('decay-with-viz', 'decay-with-viz-decision', _render_one('', {}, RUNS_
 
 # **Composite `viva_tellurium.composites.steady-state`** — `spec_viva_tellurium_composites_steady_state` (static spec file, editable dict)
 
-from viva_superpowers.composite_spec import load_spec
+from discovery_engine.composite_spec import load_spec
 spec_viva_tellurium_composites_steady_state = load_spec(REPO / 'viva_tellurium/composites/steady-state.composite.yaml')
 describe_spec(spec_viva_tellurium_composites_steady_state)
 
@@ -397,7 +397,7 @@ if RERUN:
     from process_bigraph import Composite
     try:
         with quiet():  # keep per-step stdout out of the notebook
-            from viva_superpowers.composite_spec import build_composite_from_spec
+            from discovery_engine.composite_spec import build_composite_from_spec
             _comp = build_composite_from_spec(spec_viva_tellurium_composites_steady_state, {'interval': INTERVAL_baseline}, core=core)
             _comp.run(STEPS_baseline)
         print('ran', 'baseline', f'(viva_tellurium.composites.steady-state) for', STEPS_baseline, 'steps')
