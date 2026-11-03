@@ -171,7 +171,7 @@ def make_tellurium_document(
         'stores': {},
         'emitter': {
             '_type': 'step',
-            'address': 'local:ram-emitter',
+            'address': 'local:RAMEmitter',
             'config': {
                 'emit': {
                     'species': 'map[float]',
@@ -246,7 +246,7 @@ def make_tellurium_steady_state_document(
         'ss_results': {},
         'emitter': {
             '_type': 'step',
-            'address': 'local:ram-emitter',
+            'address': 'local:RAMEmitter',
             'config': {
                 'emit': {
                     'concentrations': 'map[float]',
@@ -268,8 +268,15 @@ def register_tellurium(core=None):
     core.register_link('TelluriumUTCStep', TelluriumUTCStep)
     core.register_link('TelluriumSteadyStateStep', TelluriumSteadyStateStep)
     core.register_link('ram-emitter', RAMEmitter)
-    # Register Visualization Steps so composites can wire them by name.
-    from viva_tellurium.visualizations import SpeciesTimeSeriesPlots
+    core.register_link('RAMEmitter', RAMEmitter)
+    # Visualization Steps are dashboard-only and need viva-superpowers (the `dashboard` extra). Without it they are
+    # left unregistered; any other ImportError is a real defect and propagates.
+    try:
+        from viva_tellurium.visualizations import SpeciesTimeSeriesPlots
+    except ModuleNotFoundError as exc:
+        if exc.name is None or not exc.name.startswith('viva_superpowers'):
+            raise
+        return core
     core.register_link('SpeciesTimeSeriesPlots', SpeciesTimeSeriesPlots)
     return core
 

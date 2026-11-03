@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viva-tellurium"
-version = "0.1.2"
+version = "0.2.0"
 description = "Process-bigraph wrapper for Tellurium / libroadrunner SBML simulation"
 readme = "README.md"
 license = { text = "MIT" }
@@ -12,29 +12,30 @@ requires-python = ">=3.12"
 dependencies = [
     "process-bigraph>=1.8.5",
     "bigraph-schema",
-    "viva-superpowers",
     "tellurium>=2.2",
     "libroadrunner>=2.11.0",
     "numpy",
     "pyyaml",
-    "bigraph-viz>=2.0.3",
-    "jsonschema[format-nongpl]>=4.21",
-    "jinja2>=3.1",
-    "pypdf>=4.0",
-    "matplotlib",
-    "plotly",
-    "vivarium-workbench",
+    "typer",
+    "rich",
+    # tellurium's visualization/sbmldiagram.py imports six without declaring it, so a clean install fails with
+    # ModuleNotFoundError: six. The upstream fix belongs in tellurium; this declares the runtime requirement here.
+    "six",
 ]
 
 [project.optional-dependencies]
-cli = ["typer", "rich"]
-dev = ["pytest", "bigraph-viz", "matplotlib"]
+# Dashboard visualizations only; not needed by the simulation path (see tests/test_compose_contract.py).
+dashboard = ["viva-superpowers"]
+dev = ["pytest", "bigraph-viz", "matplotlib", "jsonschema[format-nongpl]>=4.21", "jinja2>=3.1", "pypdf>=4.0", "plotly", "viva-superpowers", "vivarium-workbench"]
 
 [tool.uv.sources]
 viva-superpowers = { git = "https://github.com/vivarium-collective/viva-superpowers.git", branch = "main" }
 
 [tool.setuptools.packages.find]
 include = ["viva_tellurium*", "pbg_tellurium"]  # pbg_tellurium = deprecation shim
+
+[tool.setuptools.package-data]
+viva_tellurium = ["composites/*.yaml"]
 
 [project.scripts]
 viva-tellurium = "viva_tellurium.cli.__main__:main"
