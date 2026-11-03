@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viva-tellurium"
-version = "0.2.0"
+version = "0.2.1"
 description = "Process-bigraph wrapper for Tellurium / libroadrunner SBML simulation"
 readme = "README.md"
 license = { text = "MIT" }
@@ -24,9 +24,23 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Dashboard visualizations only; not needed by the simulation path (see tests/test_compose_contract.py).
-dashboard = ["viva-superpowers"]
-dev = ["pytest", "bigraph-viz", "matplotlib", "jsonschema[format-nongpl]>=4.21", "jinja2>=3.1", "pypdf>=4.0", "plotly", "viva-superpowers", "vivarium-workbench"]
+# The workbench dashboard and its Visualization steps; not needed by the simulation path
+# (see tests/test_compose_contract.py). vivarium-workbench serves the workspace, viva-superpowers provides the
+# Visualization base class, and the workbench inlines plotly.js from plotly in investigation reports.
+dashboard = ["viva-superpowers", "vivarium-workbench", "plotly"]
+# Kept for compatibility with `viva-tellurium[cli]`; typer and rich are base dependencies since 0.2.0.
+cli = ["typer", "rich"]
+dev = ["pytest", "bigraph-viz", "matplotlib", "jsonschema[format-nongpl]>=4.21", "jinja2>=3.1", "pypdf>=4.0", "viva-tellurium[dashboard]"]
+
+# The workspace image (Dockerfile, Singularity.def, both generated from viva-template) runs
+# `uv sync --no-install-project` and then serves the workbench. That command installs no extras, but it does install
+# the default dependency groups, so the dashboard extra rides along here. Groups are not package metadata, so
+# `pip install viva-tellurium` is unaffected.
+[dependency-groups]
+workbench = ["viva-tellurium[dashboard]"]
+
+[tool.uv]
+default-groups = ["workbench"]
 
 [tool.uv.sources]
 viva-superpowers = { git = "https://github.com/vivarium-collective/viva-superpowers.git", branch = "main" }
