@@ -343,6 +343,42 @@ def load_composite_spec(name: str) -> dict:
     return yaml.safe_load(path.read_text())
 
 
+# Links defined in viva_tellurium.visualizations, which subclass viva_superpowers' Visualization.
+_DASHBOARD_LINKS = frozenset({"SpeciesTimeSeriesPlots"})
+
+
+def _iter_addresses(state: Any):
+    if isinstance(state, dict):
+        address = state.get("address")
+        if isinstance(address, str):
+            yield address
+        for value in state.values():
+            yield from _iter_addresses(value)
+
+
+def _require_dashboard_links(name: str, state: Any, core) -> None:
+    """Raise a clear error when ``state`` needs a Visualization that viva-superpowers is not installed to provide.
+
+    Without this, process-bigraph reports only ``no link found at address ... SpeciesTimeSeriesPlots``.
+    """
+    registry = getattr(core, "link_registry", {})
+    missing = sorted(
+        {key for key in (a.split(":", 1)[-1] for a in _iter_addresses(state)) if key in _DASHBOARD_LINKS} - set(registry)
+    )
+    if not missing:
+        return
+    try:
+        import viva_tellurium.visualizations  # noqa: F401
+    except ModuleNotFoundError as exc:
+        if exc.name is None or not exc.name.startswith("viva_superpowers"):
+            raise
+        raise ModuleNotFoundError(
+            f"composite '{name}' uses {', '.join(missing)}, which needs viva-superpowers; "
+            "install the dashboard extra: pip install 'viva-tellurium[dashboard]'",
+            name="viva_superpowers",
+        ) from exc
+
+
 def build_composite(name: str, *, overrides: dict | None = None, core=None):
     """Load a *.composite.yaml by name and instantiate process_bigraph.Composite.
 
@@ -360,6 +396,7 @@ def build_composite(name: str, *, overrides: dict | None = None, core=None):
 
     params = spec.get("parameters") or {}
     state = _substitute(spec.get("state") or {}, params, overrides or {})
+    _require_dashboard_links(name, state, core)
     # Seed wired output stores with each process's t=0 state so the first
     # emitter row carries the model's initial values (issue #7).
     seed_initial_stores(state, core)
