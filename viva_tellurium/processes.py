@@ -5,6 +5,8 @@ Process using the bridge pattern. The RoadRunner instance is lazily
 initialized on first update() call.
 """
 
+import math
+import numbers
 import os
 from pathlib import Path
 
@@ -187,7 +189,9 @@ class TelluriumProcess(Process):
             "parameters_in": (
                 "{parameter_id: value} global parameter values set in roadrunner "
                 "before each step; they override parameter_overrides and persist "
-                "until changed. Ids must be global parameters of the model"),
+                "until changed. Ids must be global parameters not defined by an "
+                "assignment rule; a writer should declare overwrite[...] so its "
+                "values replace, not add to, the store"),
         },
         outputs={
             "species": "post-step floating-species state (overwrite; an ADDITIVE delta in coupled_species mode)",
@@ -423,25 +427,35 @@ class TelluriumProcess(Process):
     def _apply_parameters_in(self, values):
         """Set each {parameter_id: value} from the ``parameters_in`` port.
 
-        Every id is checked against the model's global parameter ids before
-        anything is set, so a typo raises instead of being ignored, and a
-        species or compartment id cannot be set through this port. The check
-        runs per update rather than at build because the port's keys are only
-        known when values arrive (and a ``model_in`` reload can change the
-        parameter set). A parameter determined by an assignment rule is a
-        global parameter but is rejected by roadrunner itself with a
-        RuntimeError. Values persist in roadrunner, so a key that later
-        disappears from the port keeps its last value.
+        The whole map is validated before anything is set, so a rejected
+        update leaves roadrunner untouched. Ids must be global parameters not
+        defined by an assignment rule (roadrunner cannot set those), which also
+        keeps species and compartment ids off this port; values must be finite
+        real numbers (a NaN would otherwise surface later as a CVODE failure).
+        The check runs per update rather than at build because the port's keys
+        are only known when values arrive, and a ``model_in`` reload can change
+        the parameter set. A parameter with a rate rule is a state variable:
+        setting it restarts its integration from the given value. Values
+        persist in roadrunner, so a key that later disappears from the port
+        keeps its last value.
         """
         if not values:
             return
-        known = set(self._parameter_ids)
-        unknown = sorted(pid for pid in values if pid not in known)
+        settable = set(self._parameter_ids) - set(self._rr.getAssignmentRuleIds())
+        unknown = sorted(pid for pid in values if pid not in settable)
         if unknown:
             raise ValueError(
-                f"TelluriumProcess parameters_in: {unknown} are not global "
-                f"parameters of the model. Global parameters: "
-                f"{self._parameter_ids}")
+                f"TelluriumProcess parameters_in: {unknown} are not settable "
+                f"global parameters of the model (global parameters not "
+                f"defined by an assignment rule: {sorted(settable)})")
+        invalid = sorted(
+            pid for pid, val in values.items()
+            if isinstance(val, bool) or not isinstance(val, numbers.Real)
+            or not math.isfinite(val))
+        if invalid:
+            raise ValueError(
+                f"TelluriumProcess parameters_in: values for {invalid} are not "
+                f"finite numbers: {[values[pid] for pid in invalid]}")
         for pid, val in values.items():
             self._rr[pid] = float(val)
 

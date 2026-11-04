@@ -9,10 +9,12 @@ Every test runs the real libroadrunner engine and checks the dynamics against
 the analytic solution of first-order decay, S(t + dt) = S(t) * exp(-k * dt).
 """
 
+from itertools import pairwise
+
 import libsbml
 import numpy as np
 import pytest
-from process_bigraph import Composite, allocate_core, gather_emitter_results
+from process_bigraph import Composite, Process, allocate_core, gather_emitter_results
 from process_bigraph.emitter import RAMEmitter
 
 from viva_tellurium import TelluriumProcess, make_tellurium_document
@@ -206,14 +208,10 @@ def test_empty_or_absent_input_changes_nothing(bulk, coupled):
         store = _Store(proc)
         outs = [store.step(DT, parameters_in) for _ in range(3)]
         runs.append((store.get('S'), [o['parameters'] for o in outs]))
-    absent = _process(MODEL_DECAY, bulk_species=bulk, coupled_species=coupled)
-    absent.initial_state()
-    absent.update({'parameters_in': None}, DT)
 
     assert runs[0] == runs[1]
     assert runs[0][0] == pytest.approx(S0 * np.exp(-K0 * 3 * DT), rel=1e-6)
     assert all(p == {'k': K0} for p in runs[0][1])
-    assert absent._rr['k'] == K0
 
 
 def test_unknown_id_raises_and_sets_nothing():
@@ -221,17 +219,84 @@ def test_unknown_id_raises_and_sets_nothing():
     ValueError naming them, before any value is set."""
     proc = _process(MODEL_DECAY)
     proc.initial_state()
-    with pytest.raises(ValueError, match=r"\['S', 'kk'\] are not global parameters"):
+    with pytest.raises(ValueError, match=r"\['S', 'kk'\] are not settable global parameters"):
         proc.update({'parameters_in': {'k': K1, 'kk': 1.0, 'S': 99.0}}, DT)
     assert proc._rr['k'] == K0
     assert proc._rr['S'] == S0
 
 
-def test_rule_determined_parameter_is_rejected_by_roadrunner():
+def test_rule_determined_parameter_raises_and_sets_nothing():
+    """A global parameter defined by an assignment rule cannot be set: the
+    update raises before the valid key beside it is applied."""
     proc = _process(MODEL_RULE_PARAM)
     proc.initial_state()
-    with pytest.raises(RuntimeError, match='assignment rule'):
-        proc.update({'parameters_in': {'krule': 1.0}}, DT)
+    with pytest.raises(ValueError, match=r"\['krule'\] are not settable"):
+        proc.update({'parameters_in': {'kv': 9.0, 'krule': 1.0}}, DT)
+    assert proc._rr['kv'] == 0.1
+    assert proc._rr.getCurrentTime() == 0.0
+
+
+@pytest.mark.parametrize('bad', [float('nan'), float('inf'), True, '2.0', None])
+def test_non_finite_or_non_numeric_value_raises_and_sets_nothing(bad):
+    proc = _process(MODEL_DECAY)
+    proc.initial_state()
+    with pytest.raises(ValueError, match=r"values for \['k'\] are not finite numbers"):
+        proc.update({'parameters_in': {'k': bad}}, DT)
+    assert proc._rr['k'] == K0
+    assert proc._rr.getCurrentTime() == 0.0
+
+
+class _ConstantDriver(Process):
+    """Writes one fixed {parameter_id: value} map each update, declared
+    overwrite so it replaces the store's value rather than adding to it."""
+
+    config_schema = {'values': 'map[float]'}
+
+    def inputs(self):
+        return {}
+
+    def outputs(self):
+        return {'values': 'overwrite[map[float]]'}
+
+    def update(self, state, interval):
+        return {'values': dict(self.config['values'])}
+
+
+def test_parameters_in_driven_by_another_process():
+    """Another process writes k into the port's store. Each interval decays at
+    the k the process reports using, and k holds at the driver's value instead
+    of accumulating."""
+    core = allocate_core()
+    core.register_link('TelluriumProcess', TelluriumProcess)
+    core.register_link('ConstantDriver', _ConstantDriver)
+    core.register_link('ram-emitter', RAMEmitter)
+    doc = make_tellurium_document(model=MODEL_DECAY, interval=DT)
+    doc['tellurium']['inputs']['parameters_in'] = ['stores', 'parameters_in']
+    doc['stores']['parameters_in'] = {'k': K0}
+    doc['driver'] = {
+        '_type': 'process',
+        'address': 'local:ConstantDriver',
+        'config': {'values': {'k': K1}},
+        'interval': DT,
+        'inputs': {},
+        'outputs': {'values': ['stores', 'parameters_in']},
+    }
+
+    sim = Composite({'state': doc}, core=core)
+    sim.run(4 * DT)
+
+    proc = sim.state['tellurium']['instance']
+    index = proc.get_species_ids().index('S')
+    results = gather_emitter_results(sim)[('emitter',)]
+    assert len(results) == 5
+    ks = [row['parameters']['k'] for row in results[1:]]
+    assert ks[-1] == K1
+    assert set(ks) <= {K0, K1}
+    for before, after in pairwise(results):
+        s_before = float(np.asarray(before['species'])[index])
+        s_after = float(np.asarray(after['species'])[index])
+        k_used = after['parameters']['k']
+        assert s_after == pytest.approx(s_before * np.exp(-k_used * DT), rel=1e-6)
 
 
 def test_parameters_in_applies_after_a_model_in_reload():
