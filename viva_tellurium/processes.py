@@ -5,6 +5,8 @@ Process using the bridge pattern. The RoadRunner instance is lazily
 initialized on first update() call.
 """
 
+import math
+import numbers
 import os
 from pathlib import Path
 
@@ -89,7 +91,9 @@ class TelluriumProcess(Process):
         species_overrides: Mapping of {species_id: initial_value}
             applied after model load.
         parameter_overrides: Mapping of {parameter_id: value}
-            applied after model load.
+            applied after model load. These are initial values only: a
+            value on the ``parameters_in`` input port overrides them from
+            the first update() that carries it.
         reset_on_init: If True, call reset() after applying overrides
             (default True).
     """
@@ -182,6 +186,12 @@ class TelluriumProcess(Process):
                 "when bulk_species=True, else a {species_id: value} map); in "
                 "coupled_species mode this is the shared-store baseline the arm "
                 "starts from"),
+            "parameters_in": (
+                "{parameter_id: value} global parameter values set in roadrunner "
+                "before each step; they override parameter_overrides and persist "
+                "until changed. Ids must be global parameters not defined by an "
+                "assignment rule; a writer should declare overwrite[...] so its "
+                "values replace, not add to, the store"),
         },
         outputs={
             "species": "post-step floating-species state (overwrite; an ADDITIVE delta in coupled_species mode)",
@@ -198,7 +208,7 @@ class TelluriumProcess(Process):
             "relative_tolerance": "CVODE relative tolerance",
             "seed": "random seed for stochastic integrators (-1 = unset)",
             "species_overrides": "{species_id: initial_value} applied after model load",
-            "parameter_overrides": "{parameter_id: value} applied after model load",
+            "parameter_overrides": "{parameter_id: value} applied after model load (initial values; parameters_in overrides them)",
             "reset_on_init": "reset() after applying overrides (default True)",
             "bulk_species": "species port as a numpy Array via roadrunner's bulk C API (default True) vs a legacy map[float]",
             "coupled_species": "operator-split mode: additive species deltas that SUM under multi-process reconcile",
@@ -250,6 +260,12 @@ class TelluriumProcess(Process):
         # inert when unwired (maybe[string] default None); a non-empty string
         # (re)loads the model with precedence over the config model.
         ports['model_in'] = 'maybe[string]'
+        # Runtime parameter input: {global_parameter_id: value}, applied to
+        # roadrunner before every interval is simulated. Its own port, never
+        # the `parameters` output's store: that output overwrites every global
+        # parameter each update, so sharing a store would clobber the writer.
+        # Empty (the default, and what an unwired port carries) changes nothing.
+        ports['parameters_in'] = 'map[float]'
         return ports
 
     def outputs(self):
@@ -374,6 +390,11 @@ class TelluriumProcess(Process):
         else:
             self._build()
 
+        # Runtime parameter input, applied before the interval is simulated so
+        # the whole interval runs at the new values (same path as the config
+        # parameter_overrides). Empty or absent is a no-op.
+        self._apply_parameters_in(state.get('parameters_in') if state else None)
+
         incoming = state.get('species') if state else None
 
         if self.config.get('coupled_species'):
@@ -402,6 +423,41 @@ class TelluriumProcess(Process):
         if self.config.get('emit_model_out'):
             result['model_out'] = self.get_sbml()
         return result
+
+    def _apply_parameters_in(self, values):
+        """Set each {parameter_id: value} from the ``parameters_in`` port.
+
+        The whole map is validated before anything is set, so a rejected
+        update leaves roadrunner untouched. Ids must be global parameters not
+        defined by an assignment rule (roadrunner cannot set those), which also
+        keeps species and compartment ids off this port; values must be finite
+        real numbers (a NaN would otherwise surface later as a CVODE failure).
+        The check runs per update rather than at build because the port's keys
+        are only known when values arrive, and a ``model_in`` reload can change
+        the parameter set. A parameter with a rate rule is a state variable:
+        setting it restarts its integration from the given value. Values
+        persist in roadrunner, so a key that later disappears from the port
+        keeps its last value.
+        """
+        if not values:
+            return
+        settable = set(self._parameter_ids) - set(self._rr.getAssignmentRuleIds())
+        unknown = sorted(pid for pid in values if pid not in settable)
+        if unknown:
+            raise ValueError(
+                f"TelluriumProcess parameters_in: {unknown} are not settable "
+                f"global parameters of the model (global parameters not "
+                f"defined by an assignment rule: {sorted(settable)})")
+        invalid = sorted(
+            pid for pid, val in values.items()
+            if isinstance(val, bool) or not isinstance(val, numbers.Real)
+            or not math.isfinite(val))
+        if invalid:
+            raise ValueError(
+                f"TelluriumProcess parameters_in: values for {invalid} are not "
+                f"finite numbers: {[values[pid] for pid in invalid]}")
+        for pid, val in values.items():
+            self._rr[pid] = float(val)
 
     def _reload_from_sbml(self, sbml_text):
         """(Re)load self._rr from SBML text arriving on the model_in port.

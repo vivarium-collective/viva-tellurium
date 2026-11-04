@@ -63,13 +63,14 @@ moved through roadrunner's bulk C API (one buffer copy instead of a per-species
 `map[float]` loop), ~2× faster per `update()` and bit-identical. Wire `species`
 to an Array-shaped store. The default ports:
 
-| Port         | Dir    | Schema (default, `bulk_species=True`) |
-|--------------|--------|---------------------------------------|
-| `species`    | input  | `maybe[array[(n,),float]]`            |
-| `species`    | output | `overwrite[array[(n,),float]]`        |
-| `rates`      | output | `overwrite[map[float]]`               |
-| `parameters` | output | `overwrite[map[float]]`               |
-| `time`       | output | `overwrite[float]`                    |
+| Port            | Dir    | Schema (default, `bulk_species=True`) |
+|-----------------|--------|---------------------------------------|
+| `species`       | input  | `maybe[array[(n,),float]]`            |
+| `parameters_in` | input  | `map[float]`                          |
+| `species`       | output | `overwrite[array[(n,),float]]`        |
+| `rates`         | output | `overwrite[map[float]]`               |
+| `parameters`    | output | `overwrite[map[float]]`               |
+| `time`          | output | `overwrite[float]`                    |
 
 `species` is ordered by `getFloatingSpeciesIds()`. For **coupled multi-process**
 composites (two+ processes sharing one species store), also set
@@ -77,6 +78,26 @@ composites (two+ processes sharing one species store), also set
 arms' deltas sum under reconcile. For the **legacy per-species `map[float]`**
 port (slower; only if a consumer needs a dict-shaped species store), set
 `bulk_species=False`.
+
+`parameters_in` changes global parameters while the model runs (a rate
+constant, or an input parameter another layer drives). Before each interval is
+simulated, every `{parameter_id: value}` on the port is set in roadrunner, the
+same way the config `parameter_overrides` are set at build. So
+`parameter_overrides` gives the initial value, and the port overrides it from
+the first update that carries it.
+- A value stays in effect until the port changes it; removing a key keeps its
+  last value. A process writing to the port's store should declare its output
+  `overwrite[map[float]]` (or `overwrite[float]` when wired to one key):
+  a plain `map[float]` output *adds* to the store each update.
+- The whole map is checked before anything is set. An id that is not a global
+  parameter, or is defined by an assignment rule, and a value that is not a
+  finite number, raise a `ValueError`.
+- Parameters declared `constant="true"` in SBML can be set. A parameter with a
+  rate rule is a state variable: setting it restarts its integration from the
+  given value.
+- An unwired or empty port changes nothing.
+- It is a separate port from the `parameters` output, which overwrites every
+  global parameter after each update, so wire them to different stores.
 
 Config (all optional, one of `model`/`model_file` required):
 `model`, `model_format` (`'antimony'`/`'sbml'`), `model_file`, `integrator`
