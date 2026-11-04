@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "viva-tellurium"
-version = "0.2.1"
+version = "0.2.2"
 description = "Process-bigraph wrapper for Tellurium / libroadrunner SBML simulation"
 readme = "README.md"
 license = { text = "MIT" }
@@ -44,6 +44,9 @@ default-groups = ["workbench"]
 
 [tool.uv.sources]
 viva-superpowers = { git = "https://github.com/vivarium-collective/viva-superpowers.git", branch = "main" }
+# From git, as viva-template v0.1.0 pins it: PyPI's vivarium-workbench 0.3.92 imports `workspace_catalog`, which
+# viva-superpowers 0.25 no longer has, so `vivarium-workbench serve` crashed in the image.
+vivarium-workbench = { git = "https://github.com/vivarium-collective/vivarium-workbench.git", branch = "main" }
 
 [tool.setuptools.packages.find]
 include = ["viva_tellurium*", "pbg_tellurium"]  # pbg_tellurium = deprecation shim
