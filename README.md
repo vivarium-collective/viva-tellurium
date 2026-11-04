@@ -66,6 +66,7 @@ to an Array-shaped store. The default ports:
 | Port         | Dir    | Schema (default, `bulk_species=True`) |
 |--------------|--------|---------------------------------------|
 | `species`    | input  | `maybe[array[(n,),float]]`            |
+| `parameters_in` | input | `map[float]`                       |
 | `species`    | output | `overwrite[array[(n,),float]]`        |
 | `rates`      | output | `overwrite[map[float]]`               |
 | `parameters` | output | `overwrite[map[float]]`               |
@@ -77,6 +78,19 @@ composites (two+ processes sharing one species store), also set
 arms' deltas sum under reconcile. For the **legacy per-species `map[float]`**
 port (slower; only if a consumer needs a dict-shaped species store), set
 `bulk_species=False`.
+
+`parameters_in` changes global parameters while the model runs (a rate
+constant, or an input parameter another layer drives). Before each interval is
+simulated, every `{parameter_id: value}` on the port is set in roadrunner, the
+same way the config `parameter_overrides` are set at build. So
+`parameter_overrides` gives the initial value, and the port overrides it from
+the first update that carries it. A value stays in effect until the port
+changes it; removing a key keeps its last value. Ids must be global parameters
+of the model: any other id raises a `ValueError` before anything is set, and
+roadrunner itself rejects a parameter defined by an assignment rule. Parameters
+declared `constant="true"` in SBML can be set. An unwired or empty port changes
+nothing. It is a separate port from the `parameters` output, which overwrites
+every global parameter after each update, so wire them to different stores.
 
 Config (all optional, one of `model`/`model_file` required):
 `model`, `model_format` (`'antimony'`/`'sbml'`), `model_file`, `integrator`
