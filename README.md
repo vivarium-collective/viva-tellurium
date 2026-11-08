@@ -153,7 +153,7 @@ published read-only workbench linked above):
 
 | Investigation | Research question |
 |---|---|
-| [Tellurium sbml simulation _(planning)_](https://vivarium-collective.github.io/viva-tellurium/investigations/tellurium-sbml-simulation.html) | TBD — what overarching question ties these studies together? |
+| [Tellurium sbml simulation _(planning)_](https://vivarium-collective.github.io/viva-tellurium/workbench/reports/investigation-tellurium-sbml-simulation.html) | TBD — what overarching question ties these studies together? |
 <!-- END:investigations -->
 
 ## Demo & Tests
