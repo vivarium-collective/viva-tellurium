@@ -37,6 +37,16 @@ end
 """
 COMPARTMENT_VOLUME = 5.0
 
+# A model whose state lives in RATE RULES (x' = f), with 0 reactions — the shape
+# the BioGears sepsis extraction has (91 rate-rule vars, 0 floating species).
+MODEL_RATERULE = """
+model raterule
+  x = 1; y = 5
+  x' = 2
+  y' = -1
+end
+"""
+
 
 @pytest.fixture
 def core():
@@ -157,6 +167,31 @@ def test_outputs_schema(core):
     assert 'rates' in outputs
     assert 'parameters' in outputs
     assert 'time' in outputs
+
+
+def test_rate_rules_port_opt_in(core):
+    # Default: no rate_rules port (existing documents unaffected).
+    plain = TelluriumProcess(config={'model': MODEL_RATERULE}, core=core)
+    assert 'rate_rules' not in plain.outputs()
+    # Opt-in: a vector Array output ordered by getRateRuleIds.
+    proc = TelluriumProcess(
+        config={'model': MODEL_RATERULE, 'rate_rules_port': True}, core=core)
+    assert proc.outputs()['rate_rules'] == 'overwrite[array[(2),float]]'
+    assert proc.rate_rule_ids == ['x', 'y']
+    vec = np.asarray(proc.initial_state()['rate_rules'], dtype=float)
+    assert vec.tolist() == [1.0, 5.0]
+
+
+def test_rate_rules_vector_matches_ids_and_advances(core):
+    proc = TelluriumProcess(
+        config={'model': MODEL_RATERULE, 'rate_rules_port': True}, core=core)
+    proc.initial_state()
+    ids = proc.rate_rule_ids
+    # vector is ordered by rate_rule_ids and equals the per-id reads
+    result = proc.update({}, interval=1.0)
+    vec = np.asarray(result['rate_rules'], dtype=float)
+    assert vec[ids.index('x')] == pytest.approx(3.0)   # x' = 2, over dt=1
+    assert vec[ids.index('y')] == pytest.approx(4.0)   # y' = -1, over dt=1
 
 
 def test_convenience_accessors(core):

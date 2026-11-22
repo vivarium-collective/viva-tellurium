@@ -153,6 +153,16 @@ class TelluriumProcess(Process):
         # (re)loads the model with precedence over the config model. Inherited
         # by the Step classes via config_schema spread.
         'emit_model_out': {'_type': 'boolean', '_default': False},
+        # Opt-in rate-rule state vector output. Many SBML models (e.g. the
+        # BioGears sepsis extraction) carry 0 floating species — their Markov
+        # state lives entirely in rate-rule variables (x' = f(x)), which the
+        # `species` port does not expose. When True, declare a `rate_rules`
+        # output: a single numpy Array leaf of the rate-rule variable values,
+        # ordered by getRateRuleIds() (the companion `rate_rule_ids` property
+        # gives that ordering). Default False so existing documents are
+        # unaffected. This replaces the need for a per-model subclass that
+        # overrode outputs()/_read_state() just to surface this vector.
+        'rate_rules_port': {'_type': 'boolean', '_default': False},
     }
 
     # Integration contract. The kinetic model is user-authored Antimony/SBML, so
@@ -233,6 +243,7 @@ class TelluriumProcess(Process):
         self._species_ids = None
         self._reaction_ids = None
         self._parameter_ids = None
+        self._rate_rule_ids = None
         # Settable-subset bookkeeping (coupled mode). The subset is the set of
         # floating species we write back into roadrunner; the complement is
         # left for roadrunner to determine from conservation/assignment rules.
@@ -291,6 +302,12 @@ class TelluriumProcess(Process):
         # matches the other scalar outputs (e.g. `time`).
         if self.config.get('emit_model_out'):
             ports['model_out'] = 'overwrite[string]'
+        # Opt-in rate-rule state vector (ordered by getRateRuleIds). Overwrite
+        # Array leaf, same single-process style as the bulk `species` port.
+        if self.config.get('rate_rules_port'):
+            self._build()
+            m = len(self._rate_rule_ids)
+            ports['rate_rules'] = f'overwrite[array[({m}),float]]'
         return ports
 
     def _build(self):
@@ -333,6 +350,7 @@ class TelluriumProcess(Process):
         self._species_ids = list(self._rr.getFloatingSpeciesIds())
         self._reaction_ids = list(self._rr.getReactionIds())
         self._parameter_ids = list(self._rr.getGlobalParameterIds())
+        self._rate_rule_ids = list(self._rr.getRateRuleIds())
 
         # Settable-species subset (coupled mode). With conserved-moiety
         # analysis on, the dependent floating species are slaved to their
@@ -367,12 +385,26 @@ class TelluriumProcess(Process):
         rates_arr = rr.getReactionRates()
         rates = {rid: float(rates_arr[i])
                  for i, rid in enumerate(self._reaction_ids)}
-        return {
+        state = {
             'species': species,
             'rates': rates,
             'parameters': parameters,
             'time': float(rr.getCurrentTime()),
         }
+        if self.config.get('rate_rules_port'):
+            # roadrunner has no bulk rate-rule getter, so read per id, ordered
+            # by getRateRuleIds; emit as a vector Array leaf (see rate_rule_ids).
+            state['rate_rules'] = np.fromiter(
+                (float(rr[i]) for i in self._rate_rule_ids),
+                dtype=float, count=len(self._rate_rule_ids))
+        return state
+
+    @property
+    def rate_rule_ids(self):
+        """Ordering of the ``rate_rules`` output vector (getRateRuleIds); builds
+        the model on first access. Lets a consumer map vector index -> id."""
+        self._build()
+        return list(self._rate_rule_ids)
 
     def initial_state(self):
         self._build()
@@ -488,6 +520,7 @@ class TelluriumProcess(Process):
         self._species_ids = list(self._rr.getFloatingSpeciesIds())
         self._reaction_ids = list(self._rr.getReactionIds())
         self._parameter_ids = list(self._rr.getGlobalParameterIds())
+        self._rate_rule_ids = list(self._rr.getRateRuleIds())
 
         if cfg.get('conserved_moiety_analysis'):
             indep = set(self._rr.getIndependentFloatingSpeciesIds())
