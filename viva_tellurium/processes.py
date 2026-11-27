@@ -1095,3 +1095,10 @@ class TelluriumSteadyStateStep(BaseTelluriumStep):
         # Default output in the configured species_units (issue #14).
         return self._maybe_model_out(
             {'steady_state_concentrations': self._read_default_species()})
+
+
+def load_roadrunner(model_source, model_format="antimony", model_file=""):
+    """Public API: load a libRoadRunner instance from an antimony/SBML model source
+    or a local model file. Thin stable wrapper over the internal loader so other
+    workspaces can reuse the genuine engine without importing a private name."""
+    return _load_roadrunner(model_source, model_format=model_format, model_file=model_file)
