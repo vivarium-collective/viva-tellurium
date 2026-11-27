@@ -1,0 +1,45 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install package and test runner
+        # Install the engine-provider package and its real runtime deps only
+        # (tellurium / libroadrunner, which ship manylinux wheels). We do NOT
+        # install the optional `dashboard`/`dev` extras here: those pull
+        # vivarium-workbench / viva-superpowers from git and are workspace-only.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .
+          python -m pip install pytest
+
+      - name: Help libroadrunner find libpython at import time
+        # roadrunner's extension dlopen's libpython; make sure the interpreter's
+        # lib dir is on the loader path so `import roadrunner` resolves it.
+        run: |
+          PYLIB="$(python -c 'import sysconfig; print(sysconfig.get_config_var("LIBDIR"))')"
+          echo "LD_LIBRARY_PATH=${PYLIB}:${LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Import smoke test
+        run: |
+          python -c "import viva_tellurium; import pbg_tellurium; from viva_tellurium import load_roadrunner; print('ok')"
+
+      - name: Run tests
+        run: pytest -q
