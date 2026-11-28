@@ -14,6 +14,8 @@ import numpy as np
 
 from process_bigraph import Process, Step
 
+from engine_core import UniformTimeCourseStep
+
 try:
     # Structured process contract (summary + governing equations + symbol
     # legend) surfaced in the vivarium-workbench bigraph-loom node inspector.
@@ -1102,3 +1104,40 @@ def load_roadrunner(model_source, model_format="antimony", model_file=""):
     or a local model file. Thin stable wrapper over the internal loader so other
     workspaces can reuse the genuine engine without importing a private name."""
     return _load_roadrunner(model_source, model_format=model_format, model_file=model_file)
+
+
+class TelluriumFullReportUTCStep(UniformTimeCourseStep):
+    """One-shot full-report uniform time course via libroadrunner.
+
+    Unlike :class:`TelluriumUTCStep` (species trajectories, config-driven span),
+    this one-shot Step drives roadrunner directly and emits the SED-ML report's
+    full set — floating-species **concentrations** AND reaction **rates**, keyed
+    by bare SBML id — conforming to the shared ``engine_core`` uniform-time-course
+    contract (runtime ``model_source`` / ``time`` / ``n_points`` inputs → canonical
+    ``{result: {time, columns, values}}`` on the ``result`` port). This
+    roadrunner-specific capability (matching the BioSimulators tellurium reference,
+    which reports reaction rates too) previously lived as an adapter inside
+    viva-biomodels; it now belongs with the tellurium wrapper so any consumer can
+    reuse it. Auto-registered by ``build_core`` as ``local:TelluriumFullReportUTCStep``.
+    """
+
+    def simulate(self, model_source, time, n_points):
+        import roadrunner
+
+        rr = roadrunner.RoadRunner(model_source)
+        species = list(rr.model.getFloatingSpeciesIds())
+        reactions = list(rr.model.getReactionIds())
+        # Select species as CONCENTRATIONS (`[S]`), not RoadRunner's bare-id
+        # default — a bare `S` returns the amount for a substance-units species,
+        # so an amount-defined species would come out a compartment-size factor
+        # off from COPASI/PySCeS (which report concentrations). The column LABELS
+        # stay the bare ids so a variable still aligns across engines.
+        conc_selections = ["[%s]" % s for s in species]
+        rr.selections = ["time"] + conc_selections + reactions
+        arr = rr.simulate(0.0, float(time), n_points)
+        data = [[float(v) for v in row] for row in arr]
+        # First column is time; the rest are species concentrations then rates.
+        time_list = [row[0] for row in data]
+        columns = species + reactions
+        values = [row[1:] for row in data]
+        return time_list, columns, values
